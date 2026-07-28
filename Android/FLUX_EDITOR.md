@@ -15,6 +15,54 @@ Files are downloaded only to app-owned external storage. Completed files survive
 retry processes only missing or invalid files. Temporary `.partial` files permit byte-range resume
 and are renamed only after validation.
 
-Phase 2 will implement tokenizer execution, image preprocessing, the LiteRT GPU inference pipeline,
-and output decoding. Until then the Generate control remains disabled and is accompanied by a clear
-explanation that generation will be available in Phase 2.
+## Phase 2A: prompt tokens and embedding rows
+
+Phase 2A adds offline prompt tokenization and an embedding-table reader. Inspection of the three
+authoritative export files established these serialization formats:
+
+* `qwen_vocab.txt` is UTF-8, one token string per line, with no header or delimiter. The zero-based
+  line number is the token ID. It has 151,669 records (IDs 0 through 151,668). Token strings use the
+  GPT-2/Qwen byte-to-Unicode alphabet (for example, `Ġ` represents byte `0x20`); they are not escaped
+  or JSON encoded.
+* `qwen_merges.txt` is UTF-8, has no header, and contains exactly two non-empty token strings joined
+  by one ASCII space per line. Its zero-based line order is the BPE rank (151,387 ranks); earlier
+  lines have higher merge priority.
+* `qwen_special.txt` is UTF-8 and contains `token<TAB>decimal-id`, one record per line. All 26
+  records were inspected: `<|endoftext|>`=151643, `<|im_start|>`=151644,
+  `<|im_end|>`=151645, `<|object_ref_start|>`=151646, `<|object_ref_end|>`=151647,
+  `<|box_start|>`=151648, `<|box_end|>`=151649, `<|quad_start|>`=151650,
+  `<|quad_end|>`=151651, `<|vision_start|>`=151652, `<|vision_end|>`=151653,
+  `<|vision_pad|>`=151654, `<|image_pad|>`=151655, `<|video_pad|>`=151656,
+  `<tool_call>`=151657, `</tool_call>`=151658, `<|fim_prefix|>`=151659,
+  `<|fim_middle|>`=151660, `<|fim_suffix|>`=151661, `<|fim_pad|>`=151662,
+  `<|repo_name|>`=151663, `<|file_sep|>`=151664, `<tool_response>`=151665,
+  `</tool_response>`=151666, `<think>`=151667, and `</think>`=151668. Each mapping also agrees
+  with the same token's implicit ID in the vocabulary file.
+
+The implementation explicitly reads UTF-8, validates duplicates and cross-file references,
+normalizes ordinary input to NFC, applies the official Qwen2 pre-tokenization expression, maps UTF-8
+bytes through the byte-to-Unicode alphabet, and performs deterministic ranked BPE. Authoritative
+special strings are isolated before ordinary pre-tokenization. Like the official Qwen2 BPE model,
+there is no byte fallback or BPE unknown token: an unrepresentable piece is reported as a prompt
+preparation error rather than silently substituted. Parsed immutable tables are cached by file
+identity, length, and modification time.
+
+The reviewed official Hugging Face `Qwen2Tokenizer` defaults establish `<|endoftext|>` as both EOS
+and padding, no BOS token, no automatically added BOS/EOS, right padding, and right truncation.
+Accordingly, Phase 2A tokenizes the literal NFC-normalized user prompt without a wrapper, retains
+the first 512 token IDs, and pads on the right to exactly 512 with ID 151643 while returning a
+parallel validity representation. The export files themselves specify neither semantic token roles,
+the 512-token model limit, nor a prompt template. The literal-prompt decision and absence of a
+pipeline prompt wrapper therefore remain pending verification against an authoritative FLUX mobile
+pipeline or tokenizer fixture; complete end-to-end tokenizer parity is not claimed without that
+fixture.
+
+`tokenizer/qwen_embed_fp16.bin` is contracted as 151,936 rows × 2,560 values × 2 bytes, exactly
+777,912,320 bytes, row-major IEEE-754 binary16 in little-endian order. The reader checks that exact
+length, opens a `FileChannel` with `READ` only, creates a read-only memory mapping, and converts only
+requested rows into a flat primitive `FloatArray`. It never copies the complete table to the heap,
+rejects IDs outside `0 until 151936`, and explicitly owns and closes its channel.
+
+Mask tensor materialization, LiteRT environment/model setup and inference, GPU execution, image/VAE
+processing, scheduling, decoding, and cloud fallback remain unimplemented. Generate remains
+unconditionally disabled; Phase 2A does not produce images or placeholder results.
