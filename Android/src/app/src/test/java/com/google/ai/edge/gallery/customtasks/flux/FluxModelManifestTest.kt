@@ -69,6 +69,14 @@ class FluxModelManifestTest {
 
   @Test fun viewModelStateTransitionsAreExplicit() {
     assertTrue(reduceFluxState(FluxDownloadEvent.Checking, 0) is FluxEditorUiState.Checking)
+    assertEquals(
+      FluxEditorUiState.NotInstalled(42),
+      reduceFluxState(FluxDownloadEvent.NotInstalled(42), 10),
+    )
+    assertEquals(
+      FluxEditorUiState.NotInstalled(10),
+      reduceFluxState(FluxDownloadEvent.NotInstalled(null), 10),
+    )
     assertTrue(
       reduceFluxState(FluxDownloadEvent.Downloading(emptyList()), 10) is
         FluxEditorUiState.Downloading

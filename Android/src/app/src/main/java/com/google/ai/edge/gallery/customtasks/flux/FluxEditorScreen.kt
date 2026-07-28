@@ -45,6 +45,7 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
   val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { imageUri = it }
   val bitmap = remember(imageUri) { imageUri?.let { context.contentResolver.openInputStream(it)?.use(BitmapFactory::decodeStream) } }
   val totalBytes = when (state) {
+    is FluxEditorUiState.NotInstalled -> (state as FluxEditorUiState.NotInstalled).totalBytes
     is FluxEditorUiState.Downloading -> (state as FluxEditorUiState.Downloading).files.sumOf { it.total }
     is FluxEditorUiState.Ready -> (state as FluxEditorUiState.Ready).totalBytes
     else -> 0L
@@ -59,7 +60,7 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
     Text(if (totalBytes > 0) stringResource(R.string.flux_storage_requirement, DefaultFluxDownloadRepository.formatBytes(totalBytes), DefaultFluxDownloadRepository.formatBytes(totalBytes + DefaultFluxDownloadRepository.SAFETY_MARGIN)) else stringResource(R.string.flux_storage_checking))
     when (val current = state) {
       FluxEditorUiState.Checking -> CircularProgressIndicator()
-      FluxEditorUiState.NotInstalled -> Button(viewModel::download) { Text(stringResource(R.string.flux_download_models)) }
+      is FluxEditorUiState.NotInstalled -> Button(viewModel::download) { Text(stringResource(R.string.flux_download_models)) }
       is FluxEditorUiState.Downloading -> {
         val received = current.files.sumOf { it.received }
         LinearProgressIndicator({ if (totalBytes == 0L) 0f else received.toFloat() / totalBytes }, Modifier.fillMaxWidth())
@@ -90,7 +91,7 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
 }
 
 @Composable private fun statusText(state: FluxEditorUiState) = when (state) {
-  FluxEditorUiState.NotInstalled -> stringResource(R.string.flux_not_installed)
+  is FluxEditorUiState.NotInstalled -> stringResource(R.string.flux_not_installed)
   FluxEditorUiState.Checking -> stringResource(R.string.flux_checking)
   is FluxEditorUiState.Downloading -> stringResource(R.string.flux_downloading)
   FluxEditorUiState.Paused -> stringResource(R.string.flux_paused)
