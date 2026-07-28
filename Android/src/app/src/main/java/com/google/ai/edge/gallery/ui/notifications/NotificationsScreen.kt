@@ -63,7 +63,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.intl.platformLocale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -73,7 +75,6 @@ import com.google.ai.edge.gallery.notifications.NotificationScheduleManager
 import com.google.ai.edge.gallery.proto.ScheduledNotification
 import com.google.ai.edge.gallery.ui.theme.customColors
 import dagger.hilt.android.lifecycle.HiltViewModel
-import java.util.Locale
 import javax.inject.Inject
 
 @HiltViewModel
@@ -241,6 +242,7 @@ private val BUTTON_CONTENT_PADDING =
 
 @Composable
 fun NotificationItem(notification: ScheduledNotification, onDeleteClick: () -> Unit) {
+  val platformLocale = LocalLocale.current.platformLocale
   Card(
     modifier = Modifier.fillMaxWidth(),
     shape = RoundedCornerShape(12.dp),
@@ -262,7 +264,7 @@ fun NotificationItem(notification: ScheduledNotification, onDeleteClick: () -> U
       ) {
         Column {
           val timeStr =
-            String.format(Locale.getDefault(), "%02d:%02d", notification.hour, notification.minute)
+            String.format(platformLocale, "%02d:%02d", notification.hour, notification.minute)
           Text(
             text = stringResource(R.string.notifications_time_label, timeStr),
             style = MaterialTheme.typography.labelMedium,
