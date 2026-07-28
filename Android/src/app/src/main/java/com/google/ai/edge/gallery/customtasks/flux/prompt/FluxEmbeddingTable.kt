@@ -26,7 +26,7 @@ import java.nio.file.StandardOpenOption
 /** Owns a read-only channel and mapping of the row-major little-endian FP16 embedding table. */
 class FluxEmbeddingTable private constructor(
   private val channel: FileChannel,
-  private val mapping: MappedByteBuffer,
+  private var mapping: MappedByteBuffer?,
   val vocabularyRows: Int,
   val valuesPerRow: Int,
 ) : Closeable {
@@ -34,14 +34,14 @@ class FluxEmbeddingTable private constructor(
 
   @Synchronized
   fun lookup(tokenIds: IntArray): FloatArray {
-    check(!closed) { "Embedding table is closed" }
+    val activeMapping = mapping ?: error("Embedding table is closed.")
     val result = FloatArray(Math.multiplyExact(tokenIds.size, valuesPerRow))
     tokenIds.forEachIndexed { outputRow, tokenId ->
       if (tokenId !in 0 until vocabularyRows) throw FluxPromptPreparationException("Embedding token id $tokenId is outside 0 until $vocabularyRows")
       var inputOffset = Math.multiplyExact(tokenId, valuesPerRow * BYTES_PER_VALUE)
       var outputOffset = outputRow * valuesPerRow
       repeat(valuesPerRow) {
-        val bits = mapping.getShort(inputOffset).toInt() and 0xffff
+        val bits = activeMapping.getShort(inputOffset).toInt() and 0xffff
         result[outputOffset++] = halfToFloat(bits)
         inputOffset += BYTES_PER_VALUE
       }
@@ -49,7 +49,17 @@ class FluxEmbeddingTable private constructor(
     return result
   }
 
-  override fun close() { if (!closed) { closed = true; channel.close() } }
+  /**
+   * Releases this table's channel and its strong reference to the mapping. Clearing that reference
+   * makes the mapping eligible for runtime cleanup; Java does not guarantee immediate unmapping.
+   */
+  @Synchronized
+  override fun close() {
+    if (closed) return
+    closed = true
+    mapping = null
+    channel.close()
+  }
 
   companion object {
     const val VOCABULARY_ROWS = 151_936

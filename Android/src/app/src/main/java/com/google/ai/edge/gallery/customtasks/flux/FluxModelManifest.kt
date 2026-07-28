@@ -28,6 +28,22 @@ data class FluxModelManifest(
   }
 }
 
+/** Keeps backend-specific artifact inventories separate without inventing future TPU metadata. */
+enum class FluxArtifactTarget { GPU, TENSOR_TPU }
+
+data class FluxArtifactSet(
+  val target: FluxArtifactTarget,
+  val files: List<String>,
+) {
+  init {
+    require(files.isNotEmpty() && files.distinct().size == files.size)
+    files.forEach(::requireSafeRelativePath)
+  }
+}
+
+fun FluxModelManifest.asGpuArtifactSet(): FluxArtifactSet =
+  FluxArtifactSet(FluxArtifactTarget.GPU, files)
+
 const val FLUX_REPOSITORY = "litert-community/FLUX.2-klein-4B-LiteRT"
 const val FLUX_MODEL_DIRECTORY = "flux_2_klein_4b_litert"
 
