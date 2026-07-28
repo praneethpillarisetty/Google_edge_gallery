@@ -28,6 +28,23 @@ plugins {
   kotlin("kapt")
 }
 
+val standaloneLiteRtNative by configurations.creating
+standaloneLiteRtNative.isTransitive = false
+standaloneLiteRtNative.dependencies.add(
+    dependencies.create(libs.litert.get())
+)
+val stageStandaloneLiteRtNative by tasks.registering(Sync::class) {
+  from({ standaloneLiteRtNative.map(::zipTree) }) {
+    include("jni/arm64-v8a/libLiteRt.so", "jni/x86_64/libLiteRt.so")
+    eachFile {
+      relativePath =
+          org.gradle.api.file.RelativePath(true, *relativePath.segments.drop(1).toTypedArray())
+    }
+    includeEmptyDirs = false
+  }
+  into(layout.buildDirectory.dir("generated/standaloneLiteRtNative"))
+}
+
 android {
   namespace = "com.google.ai.edge.gallery"
   compileSdk { this.version = release(37) { minorApiLevel = 0 } }
@@ -70,6 +87,21 @@ android {
     compose = true
     buildConfig = true
   }
+  packaging {
+    jniLibs {
+      // LiteRT 2.1.0 and LiteRT-LM 0.11.0 both provide these SONAME-compatible libraries.
+      // Compatibility was verified; only the staged 2.1.0 copy can serve CompiledModel and LiteRT-LM.
+      pickFirsts += "lib/arm64-v8a/libLiteRt.so"
+      pickFirsts += "lib/x86_64/libLiteRt.so"
+    }
+  }
+  sourceSets.named("main") {
+    jniLibs.srcDir(layout.buildDirectory.dir("generated/standaloneLiteRtNative"))
+  }
+}
+
+tasks.matching { it.name.endsWith("JniLibFolders") }.configureEach {
+  dependsOn(stageStandaloneLiteRtNative)
 }
 
 dependencies {
