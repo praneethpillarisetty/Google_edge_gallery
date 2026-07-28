@@ -92,6 +92,7 @@ dependencies {
   implementation(libs.androidx.security.crypto)
   implementation(libs.androidx.webkit)
   implementation(libs.litertlm)
+  implementation(libs.litert)
   implementation(libs.commonmark)
   implementation(libs.richtext)
   implementation(libs.tflite)

@@ -67,3 +67,46 @@ rejects IDs outside `0 until 151936`, and explicitly owns and closes its channel
 Mask tensor materialization, LiteRT environment/model setup and inference, GPU execution, image/VAE
 processing, scheduling, decoding, and cloud fallback remain unimplemented. Generate remains
 unconditionally disabled; Phase 2A does not produce images or placeholder results.
+
+## Phase 2B: LiteRT GPU runner infrastructure
+
+Phase 2B adds generic graph-runner infrastructure using the LiteRT `CompiledModel` Kotlin API from
+`com.google.ai.edge.litert:litert:2.1.0`. A future complete FLUX pipeline owns one non-null shared
+`Environment`; individual graphs reuse it rather than creating an environment per graph. The owner
+has an explicit, idempotent `Closeable` lifecycle and rejects new work after it is closed.
+
+GPU execution is mandatory and compilation explicitly requests `Accelerator.GPU` with
+`CompiledModel.GpuOptions(precision = Precision.FP32)`. FP16 fallback is intentionally unavailable:
+the model's modulated blocks can overflow and produce NaNs at FP16 precision. Calls are dispatched
+off the main thread and serialized by a coroutine `Mutex`, so two generations cannot compile or run
+large GPU graphs concurrently.
+
+Only one `CompiledModel` is resident at a time. Each call compiles one downloaded `.tflite` file,
+creates ordered input and output buffers, writes and reads FP32 arrays in model-reported order, then
+deterministically closes every input buffer, every output buffer, and finally the compiled model.
+Cleanup also runs for validation errors, LiteRT failures, and coroutine cancellation. The graph is
+released before another graph can load; compiled models are not cached in this checkpoint.
+
+Phase 2B unit tests use fake runtime handles to verify ordering, FP32 option selection, serialization,
+failure paths, cancellation, and cleanup. They do not demonstrate physical-device GPU execution.
+No FLUX graph—including the text encoder, conditioning, or VAE graphs—is executed yet, no rotary
+tables or masks are synthesized, and prompt wrapping remains unspecified. **Generate remains
+disabled**, and this phase does not produce an image.
+
+### Backend boundary
+
+The only executable Phase 2B backend infrastructure is the verified LiteRT GPU implementation
+described above. The current authoritative FLUX artifact manifest is GPU-targeted and is represented
+as a distinct GPU artifact set; it is never treated as a Tensor TPU artifact set or sent to
+`Accelerator.NPU`.
+
+`TENSOR_TPU` is an architectural extension point, not an operational backend in this checkpoint.
+Working Tensor TPU support requires access to the Google Tensor SDK beta, a supported device,
+separately published and installed TPU-compiled FLUX artifacts, and validated model compatibility.
+No Google Tensor SDK dependency, TPU runner, TPU artifact filenames, hashes, sizes, URLs, or model
+metadata are included. `AUTO` may select a future Tensor TPU provider only after all four conditions
+are verified; otherwise it selects GPU. An explicit unavailable `TENSOR_TPU` request reports why it
+is unavailable and never silently falls back to GPU.
+
+No physical-device GPU or Tensor TPU execution is claimed. No FLUX graph is invoked by the app in
+Phase 2B, and **Generate remains disabled**.

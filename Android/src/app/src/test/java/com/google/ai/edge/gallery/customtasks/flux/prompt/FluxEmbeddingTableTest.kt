@@ -72,7 +72,9 @@ class FluxEmbeddingTableTest {
     Files.write(file, ByteArray(2))
     val table = FluxEmbeddingTable.open(file, 1, 1)
     table.close()
-    assertThrows(IllegalStateException::class.java) { table.lookup(intArrayOf(0)) }
+    val error = assertThrows(IllegalStateException::class.java) { table.lookup(intArrayOf(0)) }
+    assertEquals("Embedding table is closed.", error.message)
     table.close()
+    assertThrows(IllegalStateException::class.java) { table.lookup(intArrayOf(0)) }
   }
 }

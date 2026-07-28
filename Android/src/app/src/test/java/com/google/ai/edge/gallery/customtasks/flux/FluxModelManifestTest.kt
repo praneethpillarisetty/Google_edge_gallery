@@ -41,6 +41,8 @@ class FluxModelManifestTest {
     assertEquals("main", manifest.revision)
     assertEquals(authoritativeFiles, manifest.files)
     assertEquals(authoritativeFiles.size, manifest.files.toSet().size)
+    assertEquals(FluxArtifactTarget.GPU, manifest.asGpuArtifactSet().target)
+    assertEquals(authoritativeFiles, manifest.asGpuArtifactSet().files)
   }
 
   @Test(expected = IllegalArgumentException::class)
