@@ -90,8 +90,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.intl.platformLocale
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -105,7 +107,6 @@ import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 import com.google.ai.edge.gallery.ui.theme.customColors
 import java.text.SimpleDateFormat
 import java.util.Date
-import java.util.Locale
 import kotlin.math.abs
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -118,6 +119,7 @@ fun BenchmarkResultsViewer(
   viewModel: BenchmarkViewModel,
   onClose: () -> Unit,
 ) {
+  val platformLocale = LocalLocale.current.platformLocale
   val scope = rememberCoroutineScope()
   val uiState by viewModel.uiState.collectAsState()
   var showConfirmDeleteDialog by remember { mutableStateOf(false) }
@@ -346,7 +348,7 @@ fun BenchmarkResultsViewer(
                       Accordions(
                         title = "$modelName · ${llmResult.baiscInfo.accelerator}",
                         subtitle =
-                          SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+                          SimpleDateFormat("yyyy-MM-dd HH:mm:ss", platformLocale)
                             .format(Date(llmResult.baiscInfo.startMs)),
                         boldTitle = true,
                         expanded = result.expanded,
@@ -557,7 +559,7 @@ fun BenchmarkResultsViewer(
                                 label = "First init time",
                                 value =
                                   String.format(
-                                    Locale.getDefault(),
+                                    platformLocale,
                                     "%.2f",
                                     llmResult.stats.firstInitTimeMs,
                                   ),
@@ -774,6 +776,7 @@ private fun StatRow(
   baselineValue: Double? = null,
   lessIsBetter: Boolean = false,
 ) {
+  val platformLocale = LocalLocale.current.platformLocale
   Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
     // label.
     Text(
@@ -810,7 +813,7 @@ private fun StatRow(
           if (curBaselineValue != null) {
             val doubleValue = rawValue ?: value.toDoubleOrNull() ?: 0.0
             val pct = (doubleValue - curBaselineValue) / curBaselineValue * 100
-            val strPct = String.format(Locale.getDefault(), "%.1f", abs(pct))
+            val strPct = String.format(platformLocale, "%.1f", abs(pct))
             val sign = if (pct >= 0.0) "+" else "-"
             val betterSign = if (lessIsBetter) "-" else "+"
             val color =
@@ -845,6 +848,7 @@ private fun ValueSeriesRow(
   baselineAggregation: Aggregation? = null,
   lessIsBetter: Boolean = false,
 ) {
+  val platformLocale = LocalLocale.current.platformLocale
   val value = getAggregationValue(valueSeries = valueSeries, aggregation = aggregation)
   var baselineValue: Double? = null
   if (baselineValueSeries != null && baselineAggregation != null) {
@@ -900,7 +904,7 @@ private fun ValueSeriesRow(
           }
         AnimatedContent(value) { curValue ->
           Text(
-            String.format(Locale.getDefault(), "%.2f", curValue),
+            String.format(platformLocale, "%.2f", curValue),
             style = MaterialTheme.typography.labelMedium,
             color = textColor,
             maxLines = 1,
@@ -915,7 +919,7 @@ private fun ValueSeriesRow(
         ) { curBaselineValue ->
           if (curBaselineValue != null && abs(curBaselineValue) > 1e-6) {
             val pct = (value - curBaselineValue) / curBaselineValue * 100
-            val strPct = String.format(Locale.getDefault(), "%.1f", abs(pct))
+            val strPct = String.format(platformLocale, "%.1f", abs(pct))
             val sign = if (pct >= 0.0) "+" else "-"
             val betterSign = if (lessIsBetter) "-" else "+"
             val color =

@@ -67,11 +67,13 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.intl.platformLocale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.google.ai.edge.gallery.BuildConfig
@@ -85,7 +87,6 @@ import com.google.ai.edge.gallery.ui.theme.labelSmallNarrow
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.util.Locale
 import kotlin.math.min
 
 private val THEME_OPTIONS = listOf(Theme.THEME_AUTO, Theme.THEME_LIGHT, Theme.THEME_DARK)
@@ -98,13 +99,14 @@ fun SettingsDialog(
   modelManagerViewModel: ModelManagerViewModel,
   onDismissed: () -> Unit,
 ) {
+  val platformLocale = LocalLocale.current.platformLocale
   var selectedTheme by remember { mutableStateOf(curThemeOverride) }
   var selectedFirebaseAnalytics by remember { mutableStateOf(curFirebaseAnalytics) }
   var hfToken by remember { mutableStateOf(modelManagerViewModel.getTokenStatusAndData().data) }
-  val dateFormatter = remember {
+  val dateFormatter = remember(platformLocale) {
     DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
       .withZone(ZoneId.systemDefault())
-      .withLocale(Locale.getDefault())
+      .withLocale(platformLocale)
   }
   var customHfToken by remember { mutableStateOf("") }
   var isFocused by remember { mutableStateOf(false) }
