@@ -82,7 +82,10 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
       }
       is FluxEditorUiState.Ready -> Text(stringResource(R.string.flux_model_ready))
     }
-    Button(onClick = {}, enabled = state is FluxEditorUiState.Ready && bitmap != null && prompt.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.flux_generate)) }
+    Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) {
+      Text(stringResource(R.string.flux_generate))
+    }
+    Text(stringResource(R.string.flux_generation_phase_two_explanation))
   }
 }
 

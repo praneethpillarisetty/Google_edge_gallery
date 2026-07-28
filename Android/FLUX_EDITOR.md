@@ -16,4 +16,5 @@ retry processes only missing or invalid files. Temporary `.partial` files permit
 and are renamed only after validation.
 
 Phase 2 will implement tokenizer execution, image preprocessing, the LiteRT GPU inference pipeline,
-and output decoding. Until then the Generate control performs no action and is not fake generation.
+and output decoding. Until then the Generate control remains disabled and is accompanied by a clear
+explanation that generation will be available in Phase 2.

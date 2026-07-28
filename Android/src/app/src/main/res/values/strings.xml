@@ -26,6 +26,7 @@
   <string name="flux_pause" translatable="true" description="Button that pauses FLUX downloads.">Pause</string>
   <string name="flux_retry" translatable="true" description="Button that retries missing or invalid FLUX downloads.">Retry</string>
   <string name="flux_generate" translatable="true" description="Button reserved for phase two FLUX generation.">Generate</string>
+  <string name="flux_generation_phase_two_explanation" translatable="true" description="Explanation for why the FLUX Generate button is disabled.">Generation will be available in Phase 2.</string>
   <string name="flux_model_ready" translatable="true" description="Message shown after every FLUX model file is valid.">All model files are valid. Phase 2 inference is not included in this build.</string>
   <string name="flux_not_installed" translatable="true" description="FLUX model status.">Not installed</string>
   <string name="flux_checking" translatable="true" description="FLUX model status.">Checking</string>
