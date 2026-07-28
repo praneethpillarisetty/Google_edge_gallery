@@ -16,6 +16,7 @@ data class FluxModelManifest(
   init {
     require(schemaVersion == 1) { "Unsupported FLUX manifest schema" }
     require(repository == FLUX_REPOSITORY) { "Unexpected model repository" }
+    require(revision == FLUX_MODEL_REVISION) { "FLUX model revision must be immutable and verified" }
     require(files.isNotEmpty() && files.distinct().size == files.size) {
       "The manifest must contain unique files"
     }
@@ -45,6 +46,7 @@ fun FluxModelManifest.asGpuArtifactSet(): FluxArtifactSet =
   FluxArtifactSet(FluxArtifactTarget.GPU, files)
 
 const val FLUX_REPOSITORY = "litert-community/FLUX.2-klein-4B-LiteRT"
+const val FLUX_MODEL_REVISION = "f9b9171c841790a39147903febe73a85e9eaf42e"
 const val FLUX_MODEL_DIRECTORY = "flux_2_klein_4b_litert"
 
 fun requireSafeRelativePath(path: String): String {

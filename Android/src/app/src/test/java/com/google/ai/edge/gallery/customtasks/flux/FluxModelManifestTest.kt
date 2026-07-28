@@ -30,7 +30,7 @@ class FluxModelManifestTest {
     )
 
   @Test fun parsesManifest() {
-    val value = """{"schemaVersion":1,"repository":"$FLUX_REPOSITORY","revision":"main","metadataPolicy":"remote","files":["model.tflite"]}"""
+    val value = """{"schemaVersion":1,"repository":"$FLUX_REPOSITORY","revision":"$FLUX_MODEL_REVISION","metadataPolicy":"remote","files":["model.tflite"]}"""
     assertEquals(listOf("model.tflite"), FluxModelManifest.parse(value).files)
   }
 
@@ -39,7 +39,7 @@ class FluxModelManifestTest {
     val manifest = FluxModelManifest.parse(manifestFile.readText())
 
     assertEquals(FLUX_REPOSITORY, manifest.repository)
-    assertEquals("main", manifest.revision)
+    assertEquals(FLUX_MODEL_REVISION, manifest.revision)
     assertEquals(authoritativeFiles, manifest.files)
     assertEquals(authoritativeFiles.size, manifest.files.toSet().size)
     assertEquals(FluxArtifactTarget.GPU, manifest.asGpuArtifactSet().target)

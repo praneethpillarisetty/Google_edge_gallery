@@ -73,6 +73,17 @@ class FluxQwenTokenizerTest {
     assertTrue(truncated.validPositions.all { it })
   }
 
+  @Test fun `encoder preparation preserves literal bytes inside authoritative chat wrapper`() {
+    val prepared = tokenizer().prepareForTextEncoder("é")
+    assertArrayEquals(
+      intArrayOf(151644, 872, 198, 9, 151645, 198, 151644, 77091, 198, 151667, 271, 151668, 271),
+      prepared.tokenIds.copyOfRange(0, 13),
+    )
+    assertTrue(prepared.validPositions.take(13).all { it })
+    assertFalse(prepared.validPositions[13])
+    assertEquals(10, prepared.tokenIds[13])
+  }
+
   @Test fun `rejects malformed and duplicate entries`() {
     val directory = Files.createTempDirectory("bad-tokenizer")
     val vocab = directory.resolve("vocab").also { Files.writeString(it, "!\n!\n<|endoftext|>\n") }
