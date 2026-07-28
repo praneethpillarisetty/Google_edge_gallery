@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "repository": "litert-community/FLUX.2-klein-4B-LiteRT",
+  "revision": "main",
+  "metadataPolicy": "Resolve Content-Length and x-linked-etag from Hugging Face before download; no unverified sizes or hashes are embedded.",
+  "files": [
+    "tokenizer/tokenizer.json",
+    "tokenizer/tokenizer_config.json",
+    "qwen_embed_fp16.bin",
+    "ke_enc0.tflite",
+    "ke_enc1.tflite",
+    "ke_enc2.tflite",
+    "kce_prep.tflite",
+    "kce_double0.tflite",
+    "kce_double1.tflite",
+    "kce_single0.tflite",
+    "kce_single1.tflite",
+    "kce_single2.tflite",
+    "kce_single3.tflite",
+    "kce_final.tflite",
+    "kv_vae_enc.tflite",
+    "kv_vae.tflite"
+  ]
+}

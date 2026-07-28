@@ -15,6 +15,23 @@
 -->
 
 <resources>
+  <string name="flux_phase_one_notice" translatable="true" description="Notice that FLUX inference is not available in phase one.">Phase 1 prepares the on-device LiteRT GPU model. Generation will be implemented in Phase 2.</string>
+  <string name="flux_pick_reference" translatable="true" description="Button for choosing the single FLUX reference image.">Choose reference image</string>
+  <string name="flux_reference_preview_description" translatable="true" description="Accessibility description for the chosen FLUX image.">Selected reference image preview</string>
+  <string name="flux_edit_prompt" translatable="true" description="Label for the FLUX image editing instruction.">Editing prompt</string>
+  <string name="flux_model_status" translatable="true" description="FLUX model status with a status placeholder.">Model status: %1$s</string>
+  <string name="flux_storage_requirement" translatable="true" description="Exact FLUX download and required free storage including temporary files and margin.">Model files: %1$s. Required free space including the 512 MB safety margin: %2$s.</string>
+  <string name="flux_storage_checking" translatable="true" description="Displayed while authoritative FLUX sizes are retrieved.">Retrieving exact file sizes from Hugging Face…</string>
+  <string name="flux_download_models" translatable="true" description="Button that downloads all missing FLUX files.">Download Models</string>
+  <string name="flux_pause" translatable="true" description="Button that pauses FLUX downloads.">Pause</string>
+  <string name="flux_retry" translatable="true" description="Button that retries missing or invalid FLUX downloads.">Retry</string>
+  <string name="flux_generate" translatable="true" description="Button reserved for phase two FLUX generation.">Generate</string>
+  <string name="flux_model_ready" translatable="true" description="Message shown after every FLUX model file is valid.">All model files are valid. Phase 2 inference is not included in this build.</string>
+  <string name="flux_not_installed" translatable="true" description="FLUX model status.">Not installed</string>
+  <string name="flux_checking" translatable="true" description="FLUX model status.">Checking</string>
+  <string name="flux_downloading" translatable="true" description="FLUX model status.">Downloading</string>
+  <string name="flux_paused" translatable="true" description="FLUX model status.">Paused</string>
+  <string name="flux_ready" translatable="true" description="FLUX model status.">Ready</string>
   <string name="about_this_update" translatable="true" description="Title of the alert dialog that shows information about a model update. [CHAR_LIMIT=19]">About this update</string>
   <string name="all" translatable="true" description="Label for selecting or filtering all items (e.g., all models, all cutouts). [CHAR_LIMIT=5]">All</string>
   <string name="add" translatable="true" description="Button label to add a new item, such as a skill or server. [CHAR_LIMIT=5]">Add</string>
