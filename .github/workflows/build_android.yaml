@@ -3,11 +3,11 @@
   on:
     workflow_dispatch:
     push:
-      branches: [ "main" ]
+      branches: [ "main", "feature/flux-image-editor" ]
       paths:
         - 'Android/**'
     pull_request:
-      branches: [ "main" ]
+      branches: [ "main", "feature/flux-image-editor" ]
       paths:
         - 'Android/**'
   
@@ -27,7 +27,11 @@
             java-version: '21'
         - name: Install Android SDK Platform 37
           run: echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-37.0"
-        - name: Build
-          run: ./gradlew assembleRelease
+        - name: Unit tests
+          run: ./gradlew testDebugUnitTest
+        - name: Lint
+          run: ./gradlew lintDebug
+        - name: Build debug APK
+          run: ./gradlew assembleDebug
   
   

@@ -7,9 +7,40 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FluxModelManifestTest {
+  private val authoritativeFiles =
+    listOf(
+      "tokenizer/qwen_vocab.txt",
+      "tokenizer/qwen_merges.txt",
+      "tokenizer/qwen_special.txt",
+      "tokenizer/qwen_embed_fp16.bin",
+      "ke_enc0.tflite",
+      "ke_enc1.tflite",
+      "ke_enc2.tflite",
+      "kce_prep.tflite",
+      "kce_double0.tflite",
+      "kce_double1.tflite",
+      "kce_single0.tflite",
+      "kce_single1.tflite",
+      "kce_single2.tflite",
+      "kce_single3.tflite",
+      "kce_final.tflite",
+      "kv_vae_enc.tflite",
+      "kv_vae.tflite",
+    )
+
   @Test fun parsesManifest() {
     val value = """{"schemaVersion":1,"repository":"$FLUX_REPOSITORY","revision":"main","metadataPolicy":"remote","files":["model.tflite"]}"""
     assertEquals(listOf("model.tflite"), FluxModelManifest.parse(value).files)
+  }
+
+  @Test fun bundledManifestContainsCompleteAuthoritativeFileSet() {
+    val manifestFile = File("src/main/assets/flux/manifest.json")
+    val manifest = FluxModelManifest.parse(manifestFile.readText())
+
+    assertEquals(FLUX_REPOSITORY, manifest.repository)
+    assertEquals("main", manifest.revision)
+    assertEquals(authoritativeFiles, manifest.files)
+    assertEquals(authoritativeFiles.size, manifest.files.toSet().size)
   }
 
   @Test(expected = IllegalArgumentException::class)
