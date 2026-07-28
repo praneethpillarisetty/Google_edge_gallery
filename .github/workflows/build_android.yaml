@@ -6,10 +6,12 @@
       branches: [ "main", "feature/flux-image-editor" ]
       paths:
         - 'Android/**'
+        - '.github/workflows/build_android.yaml'
     pull_request:
       branches: [ "main", "feature/flux-image-editor" ]
       paths:
         - 'Android/**'
+        - '.github/workflows/build_android.yaml'
   
   jobs:
     build_apk:
@@ -29,9 +31,34 @@
           run: echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-37.0"
         - name: Unit tests
           run: ./gradlew testDebugUnitTest
-        - name: Lint
-          run: ./gradlew lintDebug
+        - name: Run Android lint
+          id: android_lint
+          continue-on-error: true
+          run: ./gradlew app:lintDebug --continue
+        - name: Print complete lint report
+          if: always()
+          run: |
+            REPORT="app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt"
+            if [ -f "$REPORT" ]; then
+              cat "$REPORT"
+            else
+              echo "Lint text report was not generated."
+            fi
+        - name: Upload lint reports
+          if: always()
+          uses: actions/upload-artifact@v4
+          with:
+            name: android-lint-reports
+            path: |
+              Android/src/app/build/reports/lint-results-debug.html
+              Android/src/app/build/reports/lint-results-debug.xml
+              Android/src/app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
+            if-no-files-found: warn
         - name: Build debug APK
           run: ./gradlew assembleDebug
+        - name: Fail when lint failed
+          if: steps.android_lint.outcome == 'failure'
+          working-directory: .
+          run: exit 1
   
   

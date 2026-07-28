@@ -126,7 +126,7 @@ constructor(
       var firstInitTime = 0.0
       val nonFirstInitTimes = mutableListOf<Double>()
       var endMs = 0L
-        run {
+      run {
         // Create a temporary cache dir to run benchmark in.
         val timestamp = System.currentTimeMillis()
         var needCleanUpCacheDir = true
