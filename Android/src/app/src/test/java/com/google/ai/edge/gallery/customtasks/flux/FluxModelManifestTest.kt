@@ -1,6 +1,7 @@
 package com.google.ai.edge.gallery.customtasks.flux
 
 import java.io.File
+import kotlin.io.path.createTempDirectory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -59,7 +60,7 @@ class FluxModelManifestTest {
   }
 
   @Test fun partialRecoveryUsesSafeSibling() {
-    val root = createTempDir()
+    val root = createTempDirectory("flux-manifest-test").toFile()
     val target = DefaultFluxDownloadRepository.safeChild(root, "nested/model.tflite")
     val partial = File(target.path + ".partial")
     partial.parentFile!!.mkdirs()

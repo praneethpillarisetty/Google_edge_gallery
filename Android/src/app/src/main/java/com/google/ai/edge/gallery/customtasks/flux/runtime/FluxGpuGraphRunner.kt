@@ -23,8 +23,10 @@ import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
 
 /** Runs one downloaded graph at a time and never retains a compiled graph between calls. */
-class FluxGpuGraphRunner internal constructor(private val runtime: FluxLiteRtEnvironment) :
-  FluxGraphRunner {
+class FluxGpuGraphRunner internal constructor(
+  private val runtime: FluxLiteRtEnvironment,
+  private val afterOutputsRead: () -> Unit = {},
+) : FluxGraphRunner {
   override suspend fun run(modelFile: File, inputs: List<FloatArray>): FluxGraphResult =
     withContext(Dispatchers.Default) {
       runtime.gpuMutex.withLock {
@@ -66,6 +68,7 @@ class FluxGpuGraphRunner internal constructor(private val runtime: FluxLiteRtEnv
       coroutineContext.ensureActive()
       activeGraph.run(inputBuffers, outputBuffers)
       val outputs = outputBuffers.map { it.readFloat() }
+      afterOutputsRead()
       coroutineContext.ensureActive()
       outputs.forEachIndexed { outputIndex, values ->
         if (values.any { !it.isFinite() }) {

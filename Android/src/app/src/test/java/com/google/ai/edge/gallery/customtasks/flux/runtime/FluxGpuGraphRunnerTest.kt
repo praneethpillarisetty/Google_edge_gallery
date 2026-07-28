@@ -18,9 +18,9 @@ package com.google.ai.edge.gallery.customtasks.flux.runtime
 import com.google.ai.edge.litert.Accelerator
 import java.io.File
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
@@ -135,16 +135,27 @@ class FluxGpuGraphRunnerTest {
   }
 
   @Test fun `cancellation after reading still cleans native resources`() = runBlocking {
-    val readStarted = CountDownLatch(1)
-    val factory = FakeFactory(onRead = {
-      readStarted.countDown()
-      Thread.sleep(75)
-    })
+    val outputsRead = CountDownLatch(1)
+    val releasePostReadBoundary = CountDownLatch(1)
+    val factory = FakeFactory()
     val runtime = FluxLiteRtEnvironment(factory)
-    val job = async { runtime.createGpuGraphRunner().run(File("cancel.tflite"), listOf(floatArrayOf(1f))) }
-    assertTrue(readStarted.await(2, TimeUnit.SECONDS))
+    val runner = FluxGpuGraphRunner(runtime) {
+      outputsRead.countDown()
+      releasePostReadBoundary.await()
+    }
+    val job = async(Dispatchers.Default) {
+      runner.run(File("cancel.tflite"), listOf(floatArrayOf(1f)))
+    }
+    outputsRead.await()
     job.cancel()
-    try { job.await() } catch (_: CancellationException) {}
+    releasePostReadBoundary.countDown()
+    var cancellationObserved = false
+    try {
+      job.await()
+    } catch (_: CancellationException) {
+      cancellationObserved = true
+    }
+    assertTrue(cancellationObserved)
     assertAllGraphResourcesClosed(factory.graphs.single())
     runtime.close()
   }
