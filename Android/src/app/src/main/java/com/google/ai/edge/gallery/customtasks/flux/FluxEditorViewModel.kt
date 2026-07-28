@@ -11,7 +11,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 sealed interface FluxEditorUiState {
-  data object NotInstalled : FluxEditorUiState
+  data class NotInstalled(val totalBytes: Long) : FluxEditorUiState
   data object Checking : FluxEditorUiState
   data class Downloading(val files: List<FluxFileProgress>) : FluxEditorUiState
   data object Paused : FluxEditorUiState
@@ -22,7 +22,8 @@ sealed interface FluxEditorUiState {
 fun reduceFluxState(event: FluxDownloadEvent, knownTotalBytes: Long): FluxEditorUiState =
   when (event) {
     FluxDownloadEvent.Checking -> FluxEditorUiState.Checking
-    is FluxDownloadEvent.NotInstalled -> FluxEditorUiState.NotInstalled
+    is FluxDownloadEvent.NotInstalled ->
+      FluxEditorUiState.NotInstalled(event.totalBytes ?: knownTotalBytes)
     is FluxDownloadEvent.Downloading -> FluxEditorUiState.Downloading(event.files)
     FluxDownloadEvent.Paused -> FluxEditorUiState.Paused
     is FluxDownloadEvent.Ready -> FluxEditorUiState.Ready(event.totalBytes)
@@ -39,7 +40,9 @@ class FluxEditorViewModel @Inject constructor(private val repository: FluxDownlo
   init {
     viewModelScope.launch {
       repository.events.collect { event ->
-        if (event is FluxDownloadEvent.NotInstalled) knownTotalBytes = event.totalBytes ?: 0
+        if (event is FluxDownloadEvent.NotInstalled && event.totalBytes != null) {
+          knownTotalBytes = event.totalBytes
+        }
         if (event is FluxDownloadEvent.Downloading) knownTotalBytes = event.files.sumOf { it.total }
         if (event is FluxDownloadEvent.Ready) knownTotalBytes = event.totalBytes
         mutableUiState.value = reduceFluxState(event, knownTotalBytes)
