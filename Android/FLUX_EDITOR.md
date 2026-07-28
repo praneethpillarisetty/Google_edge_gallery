@@ -39,18 +39,19 @@ authoritative export files established these serialization formats:
   `</tool_response>`=151666, `<think>`=151667, and `</think>`=151668. Each mapping also agrees
   with the same token's implicit ID in the vocabulary file.
 
-The implementation explicitly reads UTF-8, validates duplicates and cross-file references,
-normalizes ordinary input to NFC, applies the official Qwen2 pre-tokenization expression, maps UTF-8
-bytes through the byte-to-Unicode alphabet, and performs deterministic ranked BPE. Authoritative
-special strings are isolated before ordinary pre-tokenization. Like the official Qwen2 BPE model,
+The implementation explicitly reads UTF-8, validates duplicates and cross-file references, applies
+the official Qwen2 pre-tokenization expression, maps the literal prompt's original UTF-8 bytes
+through the byte-to-Unicode alphabet, and performs deterministic ranked BPE. It does not apply
+Unicode normalization, so canonically equivalent composed and decomposed text remains byte-distinct.
+Authoritative special strings are isolated before ordinary pre-tokenization. Like the official Qwen2 BPE model,
 there is no byte fallback or BPE unknown token: an unrepresentable piece is reported as a prompt
 preparation error rather than silently substituted. Parsed immutable tables are cached by file
 identity, length, and modification time.
 
 The reviewed official Hugging Face `Qwen2Tokenizer` defaults establish `<|endoftext|>` as both EOS
 and padding, no BOS token, no automatically added BOS/EOS, right padding, and right truncation.
-Accordingly, Phase 2A tokenizes the literal NFC-normalized user prompt without a wrapper, retains
-the first 512 token IDs, and pads on the right to exactly 512 with ID 151643 while returning a
+Accordingly, Phase 2A tokenizes the literal user prompt without a wrapper or Unicode normalization,
+retains the first 512 token IDs, and pads on the right to exactly 512 with ID 151643 while returning a
 parallel validity representation. The export files themselves specify neither semantic token roles,
 the 512-token model limit, nor a prompt template. The literal-prompt decision and absence of a
 pipeline prompt wrapper therefore remain pending verification against an authoritative FLUX mobile

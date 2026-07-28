@@ -27,14 +27,17 @@ import org.junit.Test
 class FluxEmbeddingTableTest {
   @Test fun `converts all IEEE 754 binary16 classes`() {
     fun convert(bits: Int) = FluxEmbeddingTable.halfToFloat(bits)
-    assertEquals(0.0f.toRawBits(), convert(0x0000).toRawBits())
-    assertEquals((-0.0f).toRawBits(), convert(0x8000).toRawBits())
-    assertEquals(1.0f, convert(0x3c00))
-    assertEquals(-1.0f, convert(0xbc00))
-    assertEquals(6.1035156e-5f, convert(0x0400))
-    assertEquals(5.9604645e-8f, convert(0x0001))
-    assertEquals(Float.POSITIVE_INFINITY, convert(0x7c00))
-    assertEquals(Float.NEGATIVE_INFINITY, convert(0xfc00))
+    fun assertBits(expected: Float, actual: Float) =
+      assertEquals(expected.toRawBits(), actual.toRawBits())
+
+    assertBits(0.0f, convert(0x0000))
+    assertBits(-0.0f, convert(0x8000))
+    assertBits(1.0f, convert(0x3c00))
+    assertBits(-1.0f, convert(0xbc00))
+    assertBits(6.1035156e-5f, convert(0x0400))
+    assertBits(5.9604645e-8f, convert(0x0001))
+    assertBits(Float.POSITIVE_INFINITY, convert(0x7c00))
+    assertBits(Float.NEGATIVE_INFINITY, convert(0xfc00))
     assertTrue(convert(0x7e01).isNaN())
   }
 
@@ -46,10 +49,10 @@ class FluxEmbeddingTableTest {
     FluxEmbeddingTable.open(file, vocabularyRows = 3, valuesPerRow = 2).use { table ->
       val rows = table.lookup(intArrayOf(2, 0))
       assertEquals(4, rows.size)
-      assertEquals(5.9604645e-8f, rows[0])
-      assertEquals(Float.POSITIVE_INFINITY, rows[1])
-      assertEquals(1f, rows[2])
-      assertEquals(2f, rows[3])
+      assertEquals(5.9604645e-8f.toRawBits(), rows[0].toRawBits())
+      assertEquals(Float.POSITIVE_INFINITY.toRawBits(), rows[1].toRawBits())
+      assertEquals(1f.toRawBits(), rows[2].toRawBits())
+      assertEquals(2f.toRawBits(), rows[3].toRawBits())
     }
   }
 

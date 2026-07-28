@@ -41,6 +41,16 @@ class FluxQwenTokenizerTest {
     assertArrayEquals(intArrayOf(1, 6, 0, 5, 9), tokenizer().tokenize("A in! é"))
   }
 
+  @Test fun `preserves composed and decomposed unicode bytes`() {
+    val instance = tokenizer()
+    val composed = instance.tokenize("é")
+    val decomposed = instance.tokenize("e\u0301")
+
+    assertArrayEquals(intArrayOf(9), composed)
+    assertArrayEquals(intArrayOf(12, 15), decomposed)
+    assertFalse(composed.contentEquals(decomposed))
+  }
+
   @Test fun `recognizes special token without splitting it`() {
     assertArrayEquals(intArrayOf(1, 11, 4), tokenizer().tokenize("A<|im_start|>in"))
   }

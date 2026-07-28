@@ -19,26 +19,24 @@ package com.google.ai.edge.gallery.customtasks.flux.prompt
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
-import java.text.Normalizer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.regex.Pattern
 
 /** Qwen2 byte-level BPE backed solely by the exported FLUX tokenizer text files. */
 class FluxQwenTokenizer private constructor(private val data: TokenizerData) {
   fun tokenize(text: String): IntArray {
-    val normalized = Normalizer.normalize(text, Normalizer.Form.NFC)
     val result = ArrayList<Int>()
     var start = 0
-    while (start < normalized.length) {
-      val special = data.specialsByLength.firstOrNull { normalized.startsWith(it, start) }
+    while (start < text.length) {
+      val special = data.specialsByLength.firstOrNull { text.startsWith(it, start) }
       if (special != null) {
         result += data.specialTokens.getValue(special)
         start += special.length
         continue
       }
       var end = start + 1
-      while (end < normalized.length && data.specialsByLength.none { normalized.startsWith(it, end) }) end++
-      tokenizeOrdinary(normalized.substring(start, end), result)
+      while (end < text.length && data.specialsByLength.none { text.startsWith(it, end) }) end++
+      tokenizeOrdinary(text.substring(start, end), result)
       start = end
     }
     return result.toIntArray()
