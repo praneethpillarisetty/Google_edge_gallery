@@ -95,9 +95,15 @@ dependencies {
   implementation(libs.litert)
   implementation(libs.commonmark)
   implementation(libs.richtext)
-  implementation(libs.tflite)
-  implementation(libs.tflite.gpu)
-  implementation(libs.tflite.support)
+  implementation(libs.tflite) {
+    exclude(group = "org.tensorflow", module = "tensorflow-lite-api")
+  }
+  implementation(libs.tflite.gpu) {
+    exclude(group = "org.tensorflow", module = "tensorflow-lite-api")
+  }
+  implementation(libs.tflite.support) {
+    exclude(group = "org.tensorflow", module = "tensorflow-lite-api")
+  }
   implementation(libs.camerax.core)
   implementation(libs.camerax.camera2)
   implementation(libs.camerax.lifecycle)
