@@ -53,6 +53,18 @@ class FluxQwenTokenizer private constructor(private val data: TokenizerData) {
     return FluxPromptTokens(ids, valid)
   }
 
+  /** Applies the authoritative Qwen chat wrapper, truncating only the literal UTF-8 body. */
+  fun prepareForTextEncoder(text: String): FluxPromptTokens {
+    val body = tokenize(text)
+    val bodyCount = minOf(body.size, MAX_TOKENS - TEMPLATE_PREFIX.size - TEMPLATE_SUFFIX.size)
+    val count = TEMPLATE_PREFIX.size + bodyCount + TEMPLATE_SUFFIX.size
+    val ids = IntArray(MAX_TOKENS) { data.paddingId }
+    TEMPLATE_PREFIX.copyInto(ids)
+    body.copyInto(ids, TEMPLATE_PREFIX.size, 0, bodyCount)
+    TEMPLATE_SUFFIX.copyInto(ids, TEMPLATE_PREFIX.size + bodyCount)
+    return FluxPromptTokens(ids, BooleanArray(MAX_TOKENS) { it < count })
+  }
+
   private fun tokenizeOrdinary(text: String, output: MutableList<Int>) {
     val matcher = PRETOKENIZER.matcher(text)
     var consumed = 0
@@ -95,6 +107,8 @@ class FluxQwenTokenizer private constructor(private val data: TokenizerData) {
   companion object {
     const val MAX_TOKENS = 512
     const val END_OF_TEXT = "<|endoftext|>"
+    private val TEMPLATE_PREFIX = intArrayOf(151644, 872, 198)
+    private val TEMPLATE_SUFFIX = intArrayOf(151645, 198, 151644, 77091, 198, 151667, 271, 151668, 271)
     private val PRETOKENIZER = Pattern.compile(
       "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"
     )

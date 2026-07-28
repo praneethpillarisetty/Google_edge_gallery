@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "litert-community/FLUX.2-klein-4B-LiteRT",
-  "revision": "main",
+  "revision": "f9b9171c841790a39147903febe73a85e9eaf42e",
   "metadataPolicy": "Resolve Content-Length and x-linked-etag from Hugging Face before download; no unverified sizes or hashes are embedded.",
   "files": [
     "tokenizer/qwen_vocab.txt",

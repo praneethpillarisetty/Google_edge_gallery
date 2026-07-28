@@ -110,3 +110,75 @@ is unavailable and never silently falls back to GPU.
 
 No physical-device GPU or Tensor TPU execution is claimed. No FLUX graph is invoked by the app in
 Phase 2B, and **Generate remains disabled**.
+
+## Phase 2C: Qwen text conditioning
+
+Phase 2C pins the model manifest to immutable Hugging Face revision
+`f9b9171c841790a39147903febe73a85e9eaf42e`. The 17 manifest names were compared with the download
+inventory in the companion implementation. Hugging Face file metadata remained inaccessible from
+the development proxy, so the three full-file graph SHA-256 values were not fabricated; verifying
+the downloaded LFS objects remains part of physical-device validation.
+
+The authoritative host contract comes from the open (not merged) `google-ai-edge/litert-samples`
+PR 227, pinned locally at commit `f48a89e4f29a74ab51f29c311ac7a0e5e479d225`. In particular,
+`conversion/build_klein_enc.py`, `conversion/gen_prep_klein.py`,
+`conversion/gen_verify_klein.py`, `conversion/export_tokenizer_klein.py`, and the Kotlin
+`PromptEncoder`, `QwenTokenizer`, and `Flux2KleinGenerator` sources were reviewed in full. The
+implementation is pinned as evidence rather than described as merged upstream.
+
+### Authoritative text contract
+
+The Qwen chat text is exactly
+`<|im_start|>user\n{literal prompt}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n`.
+Its prefix IDs are `[151644, 872, 198]`, suffix IDs are
+`[151645, 198, 151644, 77091, 198, 151667, 271, 151668, 271]`, and only the literal prompt body is
+truncated to make the wrapped sequence fit 512 positions. The original body is still converted
+directly to UTF-8 without normalization. Padding is on the right with ID 151643 and a parallel
+validity array distinguishes wrapper/body tokens from padding.
+
+Each of `ke_enc0.tflite`, `ke_enc1.tflite`, and `ke_enc2.tflite` has four ordered, row-major FP32
+inputs: hidden state `[1,512,2560]`, additive causal-plus-padding mask `[1,32,512,512]`, Qwen
+rotary cosine `[1,512,128]`, and Qwen rotary sine `[1,512,128]`. Each has one FP32 output
+`[1,512,2560]`. The mask uses 0 for allowed entries, adds `-1e9` when a key is in the future, and
+adds `-1e9` when a key is padded. Consequently an entry that is both future and padded is `-2e9`.
+Padded query rows are not blocked from attending to earlier valid keys. All 32 head planes are
+materialized: `[1,1,512,512]` broadcasting is prohibited because the target GPU delegate can
+silently miscompile that attention add.
+
+Encoder positions are `0..511`. Qwen3 rotary values use base 1,000,000 and head width 128: the 64
+inverse frequencies are `1 / base^(2*i/128)`, their position products are cosine/sine transformed,
+and each 64-value half is concatenated with itself to form `[1,512,128]`. Every generated input is
+checked for its exact element count and finite FP32 values.
+
+Execution is strictly `ke_enc0` (layers 1–9, tap h9), `ke_enc1` (layers 10–18, tap h18), then
+`ke_enc2` (layers 19–27, tap h27). The previous output occupies input slot zero of the next graph;
+mask, cosine, and sine remain input slots one through three. Phase 2B compiles each call with GPU
+FP32 and closes its buffers and model before returning, so only one `CompiledModel` is resident.
+The three taps are written directly into a destination in token-major order equivalent to
+`stack(taps, 1).transpose(0, 2, 1, 3).reshape(1, 512, 7680)`. The typed result is FP32 with shape
+`[1,512,7680]` and contains per-stage durations, never tensor values or the prompt.
+
+### Memory and lifecycle
+
+The checked host-array estimate is 70,778,880 bytes: embeddings 5,242,880 bytes; expanded mask
+33,554,432 bytes; cosine plus sine 524,288 bytes; three retained taps 15,728,640 bytes; and the
+final conditioning destination 15,728,640 bytes. This excludes LiteRT-owned tensor buffers,
+compiled weights, runtime overhead, and short-lived tokenizer structures, so it is not a claim of
+Pixel 10 Pro XL memory safety. FP16 embedding rows unavoidably expand to 5,242,880 bytes of FP32 for
+the graph input. The 777,912,320-byte table remains read-only memory mapped and is deterministically
+closed after preprocessing. Checked multiplication rejects overflow; preprocessing and every graph
+boundary check coroutine cancellation; failure prevents later graphs from running. Phase 2B owns
+and closes all native tensor/model resources on success, error, and cancellation.
+
+JVM tests use small contract-shaped fixtures and fake `FluxGraphRunner` instances. They verify graph
+and input order, stage wiring, sizes, non-finite rejection, representative exact mask and rotary
+values, tap interleaving, cancellation, failure short-circuiting, asset completeness/canonical path
+checks, cleanup, memory accounting, tokenizer UTF-8 behavior, and the immutable manifest. They do
+not execute LiteRT or establish reference numeric parity for the 912 MB graphs. No official numeric
+tensor fixture was committed by the pinned PR, so no expected tensor values were invented.
+
+A later Pixel run must verify all three exact downloaded graph hashes, GPU FP32 compilation and
+sequential execution, output shape and finiteness, parity tolerances against the official pipeline,
+stage durations, native/Java peak memory, cancellation, and thermal behavior. Phase 2C does not run
+image conditioning, diffusion, denoising, VAE code, or bitmap creation. **Generate remains
+disabled.**
