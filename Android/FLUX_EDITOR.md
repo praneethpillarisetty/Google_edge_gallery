@@ -227,3 +227,30 @@ and execute all three text graphs sequentially on LiteRT GPU FP32, and produce a
 finite conditioning tensor. It does **not** prove reference numeric parity, diffusion, image
 conditioning, denoising, VAE execution, image generation, or end-to-end memory safety. No placeholder
 image is produced, and **Generate remains disabled**.
+
+## Phase 2C.1 locally observed Pixel result
+
+A **local physical-device observation**, not publisher reference-parity proof, was recorded on a Google Pixel 10 Pro XL (Android API 37), using GPU FP32 in the order `ke_enc0.tflite` → `ke_enc1.tflite` → `ke_enc2.tflite`. The observed hashes were `ce32c38c94df957a83c2ae805c2f04380e8429a2b0114b89c73bbceb425cccaf`, `18d1ffb8d4ab945c93a719fbd99315fce877e684bfe7eef1714a30f1a8768ce0`, and `d48816e2d55c2e52cf6bd4c8c988736ea824065b185fb3922b727056d45cd801`, respectively. The final tensor was `[1,512,7680]` (3,932,160 finite elements). Preprocessing took 1,231 ms; the graphs took 11,450, 10,185, and 11,377 ms; total time was 38,190 ms. Approximate process PSS changed from 396,555 to 442,092 kB and thermal status remained 0 → 0.
+
+## Phase 2D reference VAE checkpoint
+
+Phase 2D uses the `litert-community/FLUX.2-klein-4B-LiteRT` model at immutable revision `f9b9171c841790a39147903febe73a85e9eaf42e` and the companion `google-ai-edge/litert-samples` PR 227 commit `f48a89e4f29a74ab51f29c311ac7a0e5e479d225`. The latter establishes the graph contract: exactly one row-major FP32 NCHW RGB `[1,3,256,256]` input and exactly one FP32 `[1,32,32,32]` output. `kv_vae_enc.tflite` returns the distribution mode/mean directly.
+
+### Deliberate Android application preprocessing contract
+
+This application owns the deterministic preprocessing policy. It is derived from the companion Android execution path but is **not claimed to be pixel-identical** to the Python preparation script's PIL bicubic resize; upstream provided no official preprocessing/VAE numeric parity tolerance.
+
+1. A single selected `content://` image is opened only through `ContentResolver`. Bounds are decoded first and a power-of-two sample is chosen while retaining at least 256 pixels on each side.
+2. AndroidX ExifInterface 1.4.1 reads orientation from a separately opened stream. All eight EXIF orientations (including mirrored forms) are applied exactly once before cropping; absent/undefined orientation is normal.
+3. Pixels are straight-alpha composited onto opaque black with `round(channel × alpha / 255)`, implemented as `(channel × alpha + 127) / 255` integer arithmetic.
+4. After orientation, `side = min(width,height)`, `left = (width-side)/2`, and `top = (height-side)/2`. Odd excess pixels remain at the right or bottom.
+5. The square is resized by `Bitmap.createScaledBitmap(square, 256, 256, true)`. This Android filtered scaling—not PIL bicubic—is canonical for the app.
+6. Opaque pixels are emitted as red plane, green plane, then blue plane, row-major within each plane, and normalized as `channel / 127.5f - 1.0f`. Exactly 196,608 finite values in `[-1,1]` are required.
+
+The Java-side VAE input is 786,432 bytes and the raw output is 131,072 bytes. The sampled ARGB_8888 working bitmap is bounded to less than 1024×1024 (about 4 MiB); the 256×256 square/scaled bitmap is 262,144 bytes, and the temporary pixel array is 262,144 bytes. Unavoidable input/output overlap is 917,504 bytes; a conservative Java-side peak including the sampled bitmap, square, scaled bitmap, pixels, input, and output is approximately 5.8 MiB. These figures do not claim native or GPU peak memory.
+
+The debug build exposes **Developer verification — Reference VAE only** and reuses the editor selection. It validates files under the shared model-file lock, hashes the graph locally, preprocesses off the main thread, runs only `kv_vae_enc.tflite` through GPU FP32, validates 32,768 finite output elements, and reports sanitized timing, heap/PSS, thermal, device/API, shapes, and the locally observed hash. Cancel uses coroutine cancellation; streams, bitmaps, native buffers, compiled model, and environment are deterministically released on success, error, and cancellation. Release source code renders no verification control.
+
+Physical Pixel verification remains required for all eight orientations with known images, crop inspection, GPU compilation, `[1,32,32,32]` finite output, runtime, memory, thermal behavior, cancellation, and the locally observed graph hash. Structural validation does not establish semantic editing quality.
+
+Patchification, latent batch normalization, `[1,256,128]` tokens, image IDs, reference/noise concatenation, `kce_*`, scheduling, denoising, VAE decoding, and image generation are deferred to Phase 2E or later. **Generate remains unconditionally disabled.**

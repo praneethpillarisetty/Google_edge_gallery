@@ -1,11 +1,10 @@
 /* Copyright 2025 Google LLC. Licensed under the Apache License, Version 2.0. */
 package com.google.ai.edge.gallery.customtasks.flux
 
-import android.graphics.BitmapFactory
 import android.net.Uri
+import android.widget.ImageView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -28,9 +27,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -43,7 +41,6 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
   var imageUri by remember { mutableStateOf<Uri?>(null) }
   var prompt by remember { mutableStateOf("") }
   val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { imageUri = it }
-  val bitmap = remember(imageUri) { imageUri?.let { context.contentResolver.openInputStream(it)?.use(BitmapFactory::decodeStream) } }
   val totalBytes = when (state) {
     is FluxEditorUiState.NotInstalled -> (state as FluxEditorUiState.NotInstalled).totalBytes
     is FluxEditorUiState.Downloading -> (state as FluxEditorUiState.Downloading).files.sumOf { it.total }
@@ -54,7 +51,13 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
   Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
     Text(stringResource(R.string.flux_phase_one_notice))
     OutlinedButton(onClick = { picker.launch("image/*") }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.flux_pick_reference)) }
-    bitmap?.let { Image(it.asImageBitmap(), stringResource(R.string.flux_reference_preview_description), Modifier.fillMaxWidth().height(220.dp), contentScale = ContentScale.Fit) }
+    imageUri?.let { selected ->
+      AndroidView(
+        factory = { ImageView(it).apply { scaleType = ImageView.ScaleType.FIT_CENTER; contentDescription = context.getString(R.string.flux_reference_preview_description) } },
+        update = { it.setImageURI(selected) },
+        modifier = Modifier.fillMaxWidth().height(220.dp),
+      )
+    }
     OutlinedTextField(prompt, { prompt = it }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.flux_edit_prompt)) }, minLines = 3)
     Text(stringResource(R.string.flux_model_status, statusText(state)))
     Text(if (totalBytes > 0) stringResource(R.string.flux_storage_requirement, DefaultFluxDownloadRepository.formatBytes(totalBytes), DefaultFluxDownloadRepository.formatBytes(totalBytes + DefaultFluxDownloadRepository.SAFETY_MARGIN)) else stringResource(R.string.flux_storage_checking))
@@ -87,7 +90,7 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
       Text(stringResource(R.string.flux_generate))
     }
     Text(stringResource(R.string.flux_generation_phase_two_explanation))
-    FluxDeveloperVerificationSection(modelReady = state is FluxEditorUiState.Ready)
+    FluxDeveloperVerificationSection(modelReady = state is FluxEditorUiState.Ready, referenceUri = imageUri)
   }
 }
 
