@@ -1,19 +1,18 @@
 /* Copyright 2026 Google LLC. Licensed under the Apache License, Version 2.0. */
 package com.google.ai.edge.gallery.customtasks.flux.image
 
-import android.content.ContentResolver
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.net.Uri
 import androidx.exifinterface.media.ExifInterface
+import java.io.File
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
-class FluxReferenceImagePreprocessor(private val resolver: ContentResolver) {
-  suspend fun preprocess(uri: Uri, progress: (String) -> Unit = {}): FluxReferenceImageTensor =
+class FluxReferenceImagePreprocessor {
+  suspend fun preprocess(source: File, progress: (String) -> Unit = {}): FluxReferenceImageTensor =
     withContext(Dispatchers.IO) {
       var decoded: Bitmap? = null
       var oriented: Bitmap? = null
@@ -23,34 +22,29 @@ class FluxReferenceImagePreprocessor(private val resolver: ContentResolver) {
       try {
         coroutineContext.ensureActive()
         progress("READING_ORIENTATION")
-        val orientation = resolver.openInputStream(uri)?.use {
-          ExifInterface(it).getAttributeInt(
+        val orientation =
+          ExifInterface(source).getAttributeInt(
             ExifInterface.TAG_ORIENTATION,
             ExifInterface.ORIENTATION_NORMAL,
           )
-        } ?: throw FluxReferenceImageException("The selected reference image cannot be opened.")
         coroutineContext.ensureActive()
 
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-          ?: throw FluxReferenceImageException("The selected reference image cannot be opened.")
+        BitmapFactory.decodeFile(source.path, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
-          throw FluxReferenceImageException("The selected reference image is empty or unsupported.")
+          throw FluxReferenceImageException("The selected image format could not be decoded.")
         }
         coroutineContext.ensureActive()
         val plan = FluxReferenceImageContracts.decodePlan(bounds.outWidth, bounds.outHeight)
 
         progress("DECODING_IMAGE")
-        decoded = resolver.openInputStream(uri)?.use {
-          BitmapFactory.decodeStream(
-            it,
-            null,
-            BitmapFactory.Options().apply {
-              inSampleSize = plan.inSampleSize
-              inPreferredConfig = Bitmap.Config.ARGB_8888
-            },
-          )
-        } ?: throw FluxReferenceImageException("The selected reference image cannot be decoded.")
+        decoded = BitmapFactory.decodeFile(
+          source.path,
+          BitmapFactory.Options().apply {
+            inSampleSize = plan.inSampleSize
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+          },
+        ) ?: throw FluxReferenceImageException("The selected image format could not be decoded.")
         coroutineContext.ensureActive()
 
         progress("APPLYING_ORIENTATION")

@@ -1,6 +1,7 @@
 /* Copyright 2025 Google LLC. Licensed under the Apache License, Version 2.0. */
 package com.google.ai.edge.gallery.customtasks.flux
 
+import android.content.Intent
 import android.net.Uri
 import android.widget.ImageView
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -27,6 +28,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -40,7 +42,17 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
   var prompt by remember { mutableStateOf("") }
   val referencePreviewDescription =
     stringResource(R.string.flux_reference_preview_description)
-  val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { imageUri = it }
+  val resolver = LocalContext.current.contentResolver
+  val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { selected ->
+    selected?.let {
+      try {
+        resolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      } catch (_: SecurityException) {
+        // Some document providers grant read access only for the current process.
+      }
+    }
+    imageUri = selected
+  }
   val totalBytes = when (state) {
     is FluxEditorUiState.NotInstalled -> (state as FluxEditorUiState.NotInstalled).totalBytes
     is FluxEditorUiState.Downloading -> (state as FluxEditorUiState.Downloading).files.sumOf { it.total }
@@ -50,7 +62,7 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
 
   Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
     Text(stringResource(R.string.flux_phase_one_notice))
-    OutlinedButton(onClick = { picker.launch("image/*") }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.flux_pick_reference)) }
+    OutlinedButton(onClick = { picker.launch(arrayOf("image/*")) }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.flux_pick_reference)) }
     imageUri?.let { selected ->
       AndroidView(
         factory = { viewContext ->

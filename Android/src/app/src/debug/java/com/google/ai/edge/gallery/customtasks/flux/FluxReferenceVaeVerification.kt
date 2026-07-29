@@ -9,6 +9,7 @@ import android.os.PowerManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.ai.edge.gallery.customtasks.flux.image.FluxReferenceImagePreprocessor
+import com.google.ai.edge.gallery.customtasks.flux.image.FluxReferenceImageSourceStager
 import com.google.ai.edge.gallery.customtasks.flux.image.FluxReferenceVaeEncoder
 import com.google.ai.edge.gallery.customtasks.flux.runtime.FluxLiteRtEnvironment
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -68,56 +69,60 @@ class FluxReferenceVaeVerificationViewModel @Inject constructor(
         if (repository.events.first() !is FluxDownloadEvent.Ready) {
           throw IllegalStateException("Model repository must be Ready.")
         }
-        val preprocessStarted = System.nanoTime()
-        val tensor = FluxReferenceImagePreprocessor(context.contentResolver).preprocess(uri) {
-          update(FluxReferenceVaeStage.valueOf(it), started)
-        }
-        val preprocessingMillis = elapsed(preprocessStarted)
-        coroutineContext.ensureActive()
-        val summary = repository.withModelFilesLocked { root, manifest, metadata ->
-          update(FluxReferenceVaeStage.VALIDATING_FILES, started)
-          val environment = FluxLiteRtEnvironment()
-          try {
-            val encoder = FluxReferenceVaeEncoder(environment.createGpuGraphRunner())
-            val graph = encoder.resolve(root, manifest)
-            val expected = metadata.singleOrNull { it.path == graph.name }
-              ?: error("Authoritative VAE graph metadata is missing.")
-            require(expected.size == graph.length()) {
-              "VAE graph size does not match authoritative metadata."
+        val summary =
+          FluxReferenceImageSourceStager(context.cacheDir, context.contentResolver, uri)
+            .withStagedSource { source ->
+              val preprocessStarted = System.nanoTime()
+              val tensor = FluxReferenceImagePreprocessor().preprocess(source) {
+                update(FluxReferenceVaeStage.valueOf(it), started)
+              }
+              val preprocessingMillis = elapsed(preprocessStarted)
+              coroutineContext.ensureActive()
+              repository.withModelFilesLocked { root, manifest, metadata ->
+                update(FluxReferenceVaeStage.VALIDATING_FILES, started)
+                val environment = FluxLiteRtEnvironment()
+                try {
+                  val encoder = FluxReferenceVaeEncoder(environment.createGpuGraphRunner())
+                  val graph = encoder.resolve(root, manifest)
+                  val expected = metadata.singleOrNull { it.path == graph.name }
+                      ?: error("Authoritative VAE graph metadata is missing.")
+                  require(expected.size == graph.length()) {
+                      "VAE graph size does not match authoritative metadata."
+                    }
+                  update(FluxReferenceVaeStage.HASHING_VAE_GRAPH, started)
+                  val hash = hasher.hash(
+                      FluxHashIdentity(graph.name, graph.length(), graph.lastModified()),
+                      graph::inputStream,
+                    )
+                  coroutineContext.ensureActive()
+                  update(FluxReferenceVaeStage.COMPILING_VAE, started)
+                  val graphStarted = System.nanoTime()
+                  update(FluxReferenceVaeStage.RUNNING_VAE, started)
+                  val latent = encoder.encode(graph, tensor)
+                  coroutineContext.ensureActive()
+                  val graphMillis = elapsed(graphStarted)
+                  update(FluxReferenceVaeStage.VALIDATING_OUTPUT, started)
+                  """backend: GPU FP32
+                        |graph: ${graph.name}
+                        |locally observed SHA-256 (not publisher-verified): $hash
+                        |pinned input contract: ${tensor.shape} FP32
+                        |pinned output contract: ${latent.shape} FP32
+                        |runtime output elements: ${latent.values.size}
+                        |runtime all values finite: true
+                        |sampled decode estimate: ${tensor.decodePlan.estimatedWidth}x${tensor.decodePlan.estimatedHeight}, ${tensor.decodePlan.estimatedArgbBytes} bytes
+                        |preprocessing: $preprocessingMillis ms
+                        |graph: $graphMillis ms
+                        |total: ${elapsed(started)} ms
+                        |Java heap: ${usedHeap()} bytes
+                        |process PSS: ${Debug.getPss()} kB
+                        |thermal: $thermalBefore -> ${thermal()}
+                        |device: ${Build.MANUFACTURER} ${Build.MODEL}; Android API ${Build.VERSION.SDK_INT}
+                        |cancellation available: yes""".trimMargin()
+                } finally {
+                  environment.close()
+                }
+              }
             }
-            update(FluxReferenceVaeStage.HASHING_VAE_GRAPH, started)
-            val hash = hasher.hash(
-              FluxHashIdentity(graph.name, graph.length(), graph.lastModified()),
-              graph::inputStream,
-            )
-            coroutineContext.ensureActive()
-            update(FluxReferenceVaeStage.COMPILING_VAE, started)
-            val graphStarted = System.nanoTime()
-            update(FluxReferenceVaeStage.RUNNING_VAE, started)
-            val latent = encoder.encode(graph, tensor)
-            coroutineContext.ensureActive()
-            val graphMillis = elapsed(graphStarted)
-            update(FluxReferenceVaeStage.VALIDATING_OUTPUT, started)
-            """backend: GPU FP32
-                |graph: ${graph.name}
-                |locally observed SHA-256 (not publisher-verified): $hash
-                |pinned input contract: ${tensor.shape} FP32
-                |pinned output contract: ${latent.shape} FP32
-                |runtime output elements: ${latent.values.size}
-                |runtime all values finite: true
-                |sampled decode estimate: ${tensor.decodePlan.estimatedWidth}x${tensor.decodePlan.estimatedHeight}, ${tensor.decodePlan.estimatedArgbBytes} bytes
-                |preprocessing: $preprocessingMillis ms
-                |graph: $graphMillis ms
-                |total: ${elapsed(started)} ms
-                |Java heap: ${usedHeap()} bytes
-                |process PSS: ${Debug.getPss()} kB
-                |thermal: $thermalBefore -> ${thermal()}
-                |device: ${Build.MANUFACTURER} ${Build.MODEL}; Android API ${Build.VERSION.SDK_INT}
-                |cancellation available: yes""".trimMargin()
-          } finally {
-            environment.close()
-          }
-        }
         mutableState.value = FluxReferenceVaeVerificationState(
           stage = FluxReferenceVaeStage.COMPLETE,
           elapsedMillis = elapsed(started),
