@@ -27,7 +27,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -37,9 +36,10 @@ import com.google.ai.edge.gallery.R
 @Composable
 fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
   val state by viewModel.uiState.collectAsState()
-  val context = LocalContext.current
   var imageUri by remember { mutableStateOf<Uri?>(null) }
   var prompt by remember { mutableStateOf("") }
+  val referencePreviewDescription =
+    stringResource(R.string.flux_reference_preview_description)
   val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { imageUri = it }
   val totalBytes = when (state) {
     is FluxEditorUiState.NotInstalled -> (state as FluxEditorUiState.NotInstalled).totalBytes
@@ -53,8 +53,13 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
     OutlinedButton(onClick = { picker.launch("image/*") }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.flux_pick_reference)) }
     imageUri?.let { selected ->
       AndroidView(
-        factory = { ImageView(it).apply { scaleType = ImageView.ScaleType.FIT_CENTER; contentDescription = context.getString(R.string.flux_reference_preview_description) } },
-        update = { it.setImageURI(selected) },
+        factory = { viewContext ->
+          ImageView(viewContext).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
+        },
+        update = { imageView ->
+          imageView.contentDescription = referencePreviewDescription
+          imageView.setImageURI(selected)
+        },
         modifier = Modifier.fillMaxWidth().height(220.dp),
       )
     }
