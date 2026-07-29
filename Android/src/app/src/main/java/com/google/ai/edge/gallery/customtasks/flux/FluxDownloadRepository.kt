@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 data class FluxFileMetadata(val path: String, val size: Long, val sha256: String?)
 data class FluxFileProgress(val path: String, val received: Long, val total: Long)
@@ -35,6 +37,7 @@ interface FluxDownloadRepository {
   suspend fun download()
   fun pause()
   suspend fun cancel()
+  suspend fun <T> withModelFilesLocked(block: suspend (File, FluxModelManifest, List<FluxFileMetadata>) -> T): T
 }
 
 @Singleton
@@ -44,6 +47,8 @@ constructor(@ApplicationContext private val context: Context) : FluxDownloadRepo
   private val state = MutableStateFlow<FluxDownloadEvent>(FluxDownloadEvent.Checking)
   override val events = state.asStateFlow()
   @Volatile private var stopRequested = false
+  private val fileOperation = Mutex()
+  private var lastMetadata: List<FluxFileMetadata>? = null
   private val root: File
     get() = File(requireNotNull(context.getExternalFilesDir(null)), FLUX_MODEL_DIRECTORY)
 
@@ -52,11 +57,12 @@ constructor(@ApplicationContext private val context: Context) : FluxDownloadRepo
       FluxModelManifest.parse(it.readText())
     }
 
-  override suspend fun check() =
-    withContext(Dispatchers.IO) {
+  override suspend fun check() = fileOperation.withLock { checkUnlocked() }
+
+  private suspend fun checkUnlocked() = withContext(Dispatchers.IO) {
       state.value = FluxDownloadEvent.Checking
       try {
-        val metadata = resolveMetadata(manifest())
+        val metadata = resolveMetadata(manifest()).also { lastMetadata = it }
         state.value =
           if (metadata.all(::isValid)) FluxDownloadEvent.Ready(metadata.sumOf { it.size })
           else FluxDownloadEvent.NotInstalled(metadata.sumOf { it.size })
@@ -68,12 +74,12 @@ constructor(@ApplicationContext private val context: Context) : FluxDownloadRepo
       }
     }
 
-  override suspend fun download() =
+  override suspend fun download() = fileOperation.withLock {
     withContext(Dispatchers.IO) {
       stopRequested = false
       try {
         val source = manifest()
-        val metadata = resolveMetadata(source)
+        val metadata = resolveMetadata(source).also { lastMetadata = it }
         val invalid = metadata.filterNot(::isValid)
         val partialBytes = invalid.sumOf { partialFor(it).length().coerceAtMost(it.size) }
         val needed = requiredStorageBytes(invalid.sumOf { it.size }, partialBytes, SAFETY_MARGIN)
@@ -101,13 +107,22 @@ constructor(@ApplicationContext private val context: Context) : FluxDownloadRepo
         state.value = if (stopRequested) FluxDownloadEvent.Paused else FluxDownloadEvent.Error(e.message ?: "Download failed")
       }
     }
+  }
 
   override fun pause() { stopRequested = true }
 
-  override suspend fun cancel() = withContext(Dispatchers.IO) {
+  override suspend fun cancel() = fileOperation.withLock { withContext(Dispatchers.IO) {
     stopRequested = true
     root.walkTopDown().filter { it.name.endsWith(".partial") }.forEach(File::delete)
-    check()
+    checkUnlocked()
+  } }
+
+  override suspend fun <T> withModelFilesLocked(
+    block: suspend (File, FluxModelManifest, List<FluxFileMetadata>) -> T
+  ): T = fileOperation.withLock {
+    val source = manifest()
+    val metadata = lastMetadata ?: resolveMetadata(source).also { lastMetadata = it }
+    block(root, source, metadata)
   }
 
   private fun resolveMetadata(manifest: FluxModelManifest): List<FluxFileMetadata> =

@@ -111,7 +111,7 @@ class FluxPromptConditionerTest {
   private fun conditioner(runner: FluxGraphRunner, value: FluxPreparedText, closed: AtomicBoolean = AtomicBoolean()) =
     FluxPromptConditioner(assets, runner, contracts) { _, _ ->
       object : FluxPromptPreprocessor {
-        override fun prepare(prompt: String) = value
+        override fun prepare(prompt: String, progress: (FluxConditioningStage) -> Unit) = value
         override fun close() { closed.set(true) }
       }
     }
