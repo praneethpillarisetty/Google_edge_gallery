@@ -9,6 +9,7 @@ import kotlin.test.assertFailsWith
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FluxReferenceImageContractsTest {
@@ -95,6 +96,26 @@ class FluxReferenceImageContractsTest {
 
   @Test fun decodePlanRejectsExtremeAspectRatioAllocation() {
     assertFailsWith<IllegalArgumentException> { FluxReferenceImageContracts.decodePlan(Int.MAX_VALUE, 256) }
+    assertFailsWith<IllegalArgumentException> { FluxReferenceImageContracts.decodePlan(256, Int.MAX_VALUE) }
+    assertFailsWith<IllegalArgumentException> {
+      FluxReferenceImageContracts.decodePlan(Int.MAX_VALUE, Int.MAX_VALUE)
+    }
+  }
+
+  @Test fun decodePlanUsesCheckedPositiveCeilingDimensions() {
+    val minimum = FluxReferenceImageContracts.decodePlan(256, 256)
+    assertEquals(1, minimum.inSampleSize)
+    assertEquals(256, minimum.estimatedWidth)
+    assertEquals(256, minimum.estimatedHeight)
+    assertEquals(262_144L, minimum.estimatedArgbBytes)
+
+    val large = FluxReferenceImageContracts.decodePlan(4_097, 3_073)
+    assertEquals(8, large.inSampleSize)
+    assertEquals(513, large.estimatedWidth)
+    assertEquals(385, large.estimatedHeight)
+    assertEquals(513L * 385L * 4L, large.estimatedArgbBytes)
+    assertTrue(large.estimatedWidth > 0 && large.estimatedHeight > 0)
+    assertTrue(large.estimatedArgbBytes in 1L..FluxReferenceImageContracts.MAX_DECODE_BYTES)
   }
 
   @Test fun encoderInvokesExactGraphOnceWithOneOrderedInput() = runTest {

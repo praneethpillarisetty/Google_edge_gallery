@@ -30,18 +30,42 @@ object FluxReferenceImageContracts {
 
   fun decodePlan(width: Int, height: Int): DecodePlan {
     require(width > 0 && height > 0) { "Invalid reference image dimensions." }
-    var sample = 1
-    while (width / (sample.toLong() * 2) >= SIZE && height / (sample.toLong() * 2) >= SIZE) {
-      sample = Math.multiplyExact(sample, 2)
+    val widthLong = width.toLong()
+    val heightLong = height.toLong()
+    var sampleLong = 1L
+    while (
+      widthLong / Math.multiplyExact(sampleLong, 2L) >= SIZE &&
+        heightLong / Math.multiplyExact(sampleLong, 2L) >= SIZE
+    ) {
+      sampleLong = Math.multiplyExact(sampleLong, 2L)
     }
-    val sampledWidth = (width + sample - 1L) / sample
-    val sampledHeight = (height + sample - 1L) / sample
-    val pixels = Math.multiplyExact(sampledWidth, sampledHeight)
-    val bytes = Math.multiplyExact(pixels, 4L)
-    require(bytes <= MAX_DECODE_BYTES) {
+    val sampledWidth: Long
+    val sampledHeight: Long
+    val bytes: Long
+    try {
+      sampledWidth = Math.addExact(widthLong, sampleLong - 1L) / sampleLong
+      sampledHeight = Math.addExact(heightLong, sampleLong - 1L) / sampleLong
+      require(sampledWidth > 0L && sampledHeight > 0L) {
+        "Invalid sampled reference image dimensions."
+      }
+      val pixels = Math.multiplyExact(sampledWidth, sampledHeight)
+      bytes = Math.multiplyExact(pixels, 4L)
+    } catch (overflow: ArithmeticException) {
+      throw IllegalArgumentException(
+        "The selected reference image is too large to preprocess safely.",
+        overflow,
+      )
+    }
+    require(bytes in 1L..MAX_DECODE_BYTES) {
       "The selected reference image is too large to preprocess safely."
     }
-    return DecodePlan(sample, sampledWidth.toInt(), sampledHeight.toInt(), bytes)
+    require(sampledWidth <= Int.MAX_VALUE.toLong() && sampledHeight <= Int.MAX_VALUE.toLong()) {
+      "The selected reference image is too large to preprocess safely."
+    }
+    require(sampleLong <= Int.MAX_VALUE.toLong()) {
+      "The selected reference image is too large to preprocess safely."
+    }
+    return DecodePlan(sampleLong.toInt(), sampledWidth.toInt(), sampledHeight.toInt(), bytes)
   }
 
   fun orientedSize(orientation: Int, width: Int, height: Int): Pair<Int, Int> =
