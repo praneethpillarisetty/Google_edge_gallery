@@ -68,6 +68,7 @@ private fun FluxReferenceVaeVerificationSection(
   viewModel: FluxReferenceVaeVerificationViewModel = hiltViewModel(),
 ) {
   val state by viewModel.state.collectAsState()
+  val context = LocalContext.current
   Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
     Text("Developer verification — Reference VAE only")
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -75,8 +76,15 @@ private fun FluxReferenceVaeVerificationSection(
       OutlinedButton(onClick = viewModel::cancel, enabled = state.running) { Text("Cancel") }
     }
     Text("Current stage: ${state.stage}")
+    Text("Elapsed: ${state.elapsedMillis} ms")
     if (state.running) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
     state.error?.let { Text(it) }
-    if (state.summary.isNotEmpty()) OutlinedTextField(state.summary, {}, readOnly = true, label = { Text("Sanitized VAE diagnostic") }, modifier = Modifier.fillMaxWidth())
+    if (state.summary.isNotEmpty()) {
+      OutlinedTextField(state.summary, {}, readOnly = true, label = { Text("Sanitized VAE diagnostic") }, modifier = Modifier.fillMaxWidth())
+      OutlinedButton(onClick = {
+        context.getSystemService(ClipboardManager::class.java)
+          .setPrimaryClip(ClipData.newPlainText("FLUX Reference VAE diagnostic", state.summary))
+      }) { Text("Copy diagnostic summary") }
+    }
   }
 }

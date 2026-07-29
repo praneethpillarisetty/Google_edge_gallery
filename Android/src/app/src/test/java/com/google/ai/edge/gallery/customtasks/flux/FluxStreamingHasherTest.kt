@@ -14,6 +14,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FluxStreamingHasherTest {
+  @Test fun knownSha256IsLowercaseAndComplete() = runTest {
+    val hash = FluxStreamingHasher(MemoryCache()).hash(id(), { ByteArrayInputStream("abc".toByteArray()) })
+    assertEquals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", hash)
+  }
   @Test fun streamingHashCancellationClosesInput() = runTest {
     val cache = MemoryCache(); val started = CompletableDeferred<Unit>(); val closed = CompletableDeferred<Unit>()
     val blocking = object : InputStream() {
