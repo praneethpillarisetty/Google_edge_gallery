@@ -182,3 +182,48 @@ sequential execution, output shape and finiteness, parity tolerances against the
 stage durations, native/Java peak memory, cancellation, and thermal behavior. Phase 2C does not run
 image conditioning, diffusion, denoising, VAE code, or bitmap creation. **Generate remains
 disabled.**
+
+## Phase 2C.1: physical-device text-encoder verification (debug only)
+
+Build and install the diagnostic APK from `Android/src` with
+`./gradlew --no-daemon app:assembleDebug --console=plain`, followed by
+`adb install -r app/build/outputs/apk/debug/app-debug.apk`. Open **FLUX Image Editor**, complete the
+model download until its state is **Ready**, then use **Developer verification — Text encoder only**.
+This section is supplied only by the debug source set; release builds contain an empty source-set
+implementation and expose no verification action or navigation route. Generate remains disabled in
+both variants.
+
+Use a non-sensitive prompt. The run validates every tokenizer, embedding, and encoder asset against
+the authoritative resolved size metadata and its canonical app-owned location. It then streams each
+encoder graph through SHA-256 with cancellation checks and caches the observation by filename, size,
+and modification time. Because publisher graph digests are not present in authoritative metadata,
+the summary deliberately labels these values **observed**, not publisher-verified. A changed file
+identity invalidates the cached observation.
+
+The expected graph order is `ke_enc0.tflite` → `ke_enc1.tflite` → `ke_enc2.tflite`, with one GPU
+FP32 compiled model resident at a time. Success requires a finite `[1,512,7680]` result. Expect a
+multi-minute run and significant device heating; emergency/shutdown thermal states are rejected and
+severe states remain visible as a warning in the diagnostic context. The UI reports approximate Java
+heap and process PSS—not exact native or GPU allocation—and thermal status before and after.
+
+Cancel is checked while hashing and preprocessing and between graph stages. Leaving the editor
+cancels verification when its navigation-scoped ViewModel is permanently cleared; configuration
+recreation retains that ViewModel and therefore cannot start a duplicate run. Downloads, retries,
+deletion of partial files, and verification share the same model-file operation lock.
+
+To capture a sanitized report, tap **Copy diagnostic summary** or run:
+
+```shell
+adb logcat -c
+adb logcat -v threadtime | sed -E 's#(/storage/[^ ]+|prompt=[^ ]+)#[REDACTED]#g' > flux-device.txt
+```
+
+Review the file before sharing it. The built-in summary contains graph filenames, locally observed
+hashes, timings, shape, finiteness, approximate memory, device/API and thermal information, but no
+prompt, token IDs, tensor values, credentials, or filesystem paths.
+
+A successful run proves that this device can resolve the pinned files, preprocess the prompt, compile
+and execute all three text graphs sequentially on LiteRT GPU FP32, and produce a correctly shaped,
+finite conditioning tensor. It does **not** prove reference numeric parity, diffusion, image
+conditioning, denoising, VAE execution, image generation, or end-to-end memory safety. No placeholder
+image is produced, and **Generate remains disabled**.

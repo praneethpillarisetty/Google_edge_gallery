@@ -19,7 +19,7 @@ internal data class FluxPreparedText(
 )
 
 internal fun interface FluxPromptPreprocessor : Closeable {
-  fun prepare(prompt: String): FluxPreparedText
+  fun prepare(prompt: String, progress: (FluxConditioningStage) -> Unit): FluxPreparedText
   override fun close() = Unit
 }
 
@@ -29,15 +29,20 @@ internal class FluxAssetPromptPreprocessor(
 ) : FluxPromptPreprocessor {
   private var table: FluxEmbeddingTable? = null
 
-  override fun prepare(prompt: String): FluxPreparedText {
+  override fun prepare(prompt: String, progress: (FluxConditioningStage) -> Unit): FluxPreparedText {
+    progress(FluxConditioningStage.TOKENIZING)
     val tokenizer = FluxQwenTokenizer.load(assets.vocabulary.toPath(), assets.merges.toPath(), assets.specials.toPath())
     val tokens = tokenizer.prepareForTextEncoder(prompt)
+    progress(FluxConditioningStage.EMBEDDING)
     val activeTable = FluxEmbeddingTable.open(assets.embeddings.toPath()).also { table = it }
     val embeddings = activeTable.lookup(tokens.tokenIds)
     validateFinite("embedding", embeddings)
+    progress(FluxConditioningStage.BUILDING_MASK)
+    val mask = FluxPromptConditioner.buildMask(tokens.validPositions, contracts)
+    progress(FluxConditioningStage.BUILDING_ROTARY)
     return FluxPreparedText(
       embeddings,
-      FluxPromptConditioner.buildMask(tokens.validPositions, contracts),
+      mask,
       FluxPromptConditioner.buildRotary(contracts, false),
       FluxPromptConditioner.buildRotary(contracts, true),
     )
@@ -53,12 +58,15 @@ class FluxPromptConditioner internal constructor(
   private val contracts: FluxTextEncoderContracts = FluxTextEncoderContracts(),
   private val preprocessorFactory: (FluxPromptAssets, FluxTextEncoderContracts) -> FluxPromptPreprocessor = ::FluxAssetPromptPreprocessor,
 ) {
-  suspend fun condition(prompt: String): FluxTextConditioning {
+  suspend fun condition(
+    prompt: String,
+    progress: (FluxConditioningStage) -> Unit = {},
+  ): FluxTextConditioning {
     try { contracts.estimatedPeakBytes() } catch (e: ArithmeticException) {
       throw FluxTextConditioningException("Prompt-encoder memory calculation overflowed.", e)
     }
     coroutineContext.ensureActive()
-    val prepared = preprocessorFactory(assets, contracts).use { it.prepare(prompt) }
+    val prepared = preprocessorFactory(assets, contracts).use { it.prepare(prompt, progress) }
     validateSize("embeddings", prepared.embeddings, contracts.hiddenElements)
     validateSize("mask", prepared.mask, contracts.maskElements)
     validateSize("cosine", prepared.cosine, contracts.rotaryElements)
@@ -70,6 +78,7 @@ class FluxPromptConditioner internal constructor(
     val durations = ArrayList<Long>(3)
     for ((index, graph) in assets.encoderGraphs.withIndex()) {
       coroutineContext.ensureActive()
+      progress(listOf(FluxConditioningStage.RUNNING_ENC0, FluxConditioningStage.RUNNING_ENC1, FluxConditioningStage.RUNNING_ENC2)[index])
       val start = System.nanoTime()
       val result = runner.run(graph, listOf(hidden, prepared.mask, prepared.cosine, prepared.sine))
       durations += (System.nanoTime() - start) / 1_000_000
@@ -81,6 +90,7 @@ class FluxPromptConditioner internal constructor(
       taps += hidden
     }
     coroutineContext.ensureActive()
+    progress(FluxConditioningStage.INTERLEAVING)
     val output = interleaveTaps(taps, contracts)
     taps.clear()
     return FluxTextConditioning(output, listOf(1, contracts.sequenceLength, 3 * contracts.hiddenSize), durations)
@@ -124,6 +134,11 @@ class FluxPromptConditioner internal constructor(
       return destination
     }
   }
+}
+
+enum class FluxConditioningStage {
+  TOKENIZING, EMBEDDING, BUILDING_MASK, BUILDING_ROTARY,
+  RUNNING_ENC0, RUNNING_ENC1, RUNNING_ENC2, INTERLEAVING,
 }
 
 private fun validateSize(name: String, values: FloatArray, expected: Int) {

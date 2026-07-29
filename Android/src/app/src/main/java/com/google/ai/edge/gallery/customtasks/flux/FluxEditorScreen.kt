@@ -87,6 +87,7 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
       Text(stringResource(R.string.flux_generate))
     }
     Text(stringResource(R.string.flux_generation_phase_two_explanation))
+    FluxDeveloperVerificationSection(modelReady = state is FluxEditorUiState.Ready)
   }
 }
 
