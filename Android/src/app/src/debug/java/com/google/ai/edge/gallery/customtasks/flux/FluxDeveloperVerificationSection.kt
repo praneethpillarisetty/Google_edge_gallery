@@ -4,6 +4,7 @@ package com.google.ai.edge.gallery.customtasks.flux
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,6 +28,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 @Composable
 internal fun FluxDeveloperVerificationSection(
   modelReady: Boolean,
+  referenceUri: Uri?,
   viewModel: FluxVerificationViewModel = hiltViewModel(),
 ) {
   val state by viewModel.state.collectAsState()
@@ -53,6 +55,35 @@ internal fun FluxDeveloperVerificationSection(
       OutlinedTextField(value = state.summary, onValueChange = {}, readOnly = true, label = { Text("Sanitized diagnostic summary") }, modifier = Modifier.fillMaxWidth())
       OutlinedButton(onClick = {
         context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("FLUX diagnostic", state.summary))
+      }) { Text("Copy diagnostic summary") }
+    }
+    FluxReferenceVaeVerificationSection(modelReady, referenceUri)
+  }
+}
+
+@Composable
+private fun FluxReferenceVaeVerificationSection(
+  modelReady: Boolean,
+  referenceUri: Uri?,
+  viewModel: FluxReferenceVaeVerificationViewModel = hiltViewModel(),
+) {
+  val state by viewModel.state.collectAsState()
+  val context = LocalContext.current
+  Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+    Text("Developer verification — Reference VAE only")
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      Button(onClick = { referenceUri?.let { viewModel.run(it, modelReady) } }, enabled = modelReady && referenceUri != null && !state.running) { Text("Verify Reference VAE") }
+      OutlinedButton(onClick = viewModel::cancel, enabled = state.running) { Text("Cancel") }
+    }
+    Text("Current stage: ${state.stage}")
+    Text("Elapsed: ${state.elapsedMillis} ms")
+    if (state.running) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+    state.error?.let { Text(it) }
+    if (state.summary.isNotEmpty()) {
+      OutlinedTextField(state.summary, {}, readOnly = true, label = { Text("Sanitized VAE diagnostic") }, modifier = Modifier.fillMaxWidth())
+      OutlinedButton(onClick = {
+        context.getSystemService(ClipboardManager::class.java)
+          .setPrimaryClip(ClipData.newPlainText("FLUX Reference VAE diagnostic", state.summary))
       }) { Text("Copy diagnostic summary") }
     }
   }

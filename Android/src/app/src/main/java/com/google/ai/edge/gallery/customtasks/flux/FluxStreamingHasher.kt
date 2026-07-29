@@ -26,6 +26,7 @@ internal class FluxStreamingHasher(private val cache: FluxHashCache) {
     cache.get(identity)?.let { return it }
     val digest = MessageDigest.getInstance("SHA-256")
     var read = 0L
+    coroutineContext.ensureActive()
     open().buffered().use { input ->
       val buffer = ByteArray(1024 * 1024)
       while (true) {
