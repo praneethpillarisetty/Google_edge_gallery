@@ -97,9 +97,17 @@ class FluxReferenceImageContractsTest {
   @Test fun decodePlanRejectsExtremeAspectRatioAllocation() {
     assertFailsWith<IllegalArgumentException> { FluxReferenceImageContracts.decodePlan(Int.MAX_VALUE, 256) }
     assertFailsWith<IllegalArgumentException> { FluxReferenceImageContracts.decodePlan(256, Int.MAX_VALUE) }
-    assertFailsWith<IllegalArgumentException> {
-      FluxReferenceImageContracts.decodePlan(Int.MAX_VALUE, Int.MAX_VALUE)
-    }
+  }
+
+  @Test fun decodePlanSafelyDownsamplesExtremeSquare() {
+    val plan = FluxReferenceImageContracts.decodePlan(Int.MAX_VALUE, Int.MAX_VALUE)
+    assertEquals(4_194_304, plan.inSampleSize)
+    assertEquals(512, plan.estimatedWidth)
+    assertEquals(512, plan.estimatedHeight)
+    assertEquals(1_048_576L, plan.estimatedArgbBytes)
+    assertTrue(plan.estimatedWidth > 0)
+    assertTrue(plan.estimatedHeight > 0)
+    assertTrue(plan.estimatedArgbBytes in 1L..FluxReferenceImageContracts.MAX_DECODE_BYTES)
   }
 
   @Test fun decodePlanUsesCheckedPositiveCeilingDimensions() {
