@@ -14,7 +14,6 @@ import com.google.ai.edge.gallery.customtasks.flux.runtime.FluxLiteRtEnvironment
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
-import java.security.MessageDigest
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -161,25 +160,17 @@ class FluxVerificationViewModel @Inject constructor(
 
   private suspend fun observedHash(file: File, index: Int, started: Long): String {
     val prefs = context.getSharedPreferences("flux_encoder_observed_hashes", Context.MODE_PRIVATE)
-    val identity = "${file.name}:${file.length()}:${file.lastModified()}"
-    prefs.getString(identity, null)?.let { return it }
+    val identity = FluxHashIdentity(file.name, file.length(), file.lastModified())
     val stage = listOf(FluxVerificationStage.HASHING_ENC0, FluxVerificationStage.HASHING_ENC1, FluxVerificationStage.HASHING_ENC2)[index]
-    val digest = MessageDigest.getInstance("SHA-256")
-    var read = 0L
-    file.inputStream().buffered().use { input ->
-      val buffer = ByteArray(1024 * 1024)
-      while (true) {
-        coroutineContext.ensureActive()
-        val amount = input.read(buffer)
-        if (amount < 0) break
-        digest.update(buffer, 0, amount)
-        read += amount
-        mutableState.value = FluxVerificationUiState(true, stage, elapsed(started), read, file.length())
+    val hasher = FluxStreamingHasher(object : FluxHashCache {
+      override fun get(identity: FluxHashIdentity) = prefs.getString(identity.key, null)
+      override fun put(identity: FluxHashIdentity, hash: String) {
+        prefs.edit().putString(identity.key, hash).apply()
       }
+    })
+    return hasher.hash(identity, file::inputStream) { read ->
+      mutableState.value = FluxVerificationUiState(true, stage, elapsed(started), read, file.length())
     }
-    val value = digest.digest().joinToString("") { "%02x".format(it) }
-    prefs.edit().putString(identity, value).apply()
-    return value
   }
 
   private fun update(stage: FluxVerificationStage, started: Long) {

@@ -6,6 +6,7 @@ import android.os.StatFs
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.io.FileOutputStream
+import java.io.Closeable
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
@@ -16,8 +17,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 data class FluxFileMetadata(val path: String, val size: Long, val sha256: String?)
 data class FluxFileProgress(val path: String, val received: Long, val total: Long)
@@ -46,8 +45,8 @@ class DefaultFluxDownloadRepository
 constructor(@ApplicationContext private val context: Context) : FluxDownloadRepository {
   private val state = MutableStateFlow<FluxDownloadEvent>(FluxDownloadEvent.Checking)
   override val events = state.asStateFlow()
-  @Volatile private var stopRequested = false
-  private val fileOperation = Mutex()
+  private val ownership = FluxDownloadOwnership()
+  private val cancellation get() = ownership.cancellation
   private var lastMetadata: List<FluxFileMetadata>? = null
   private val root: File
     get() = File(requireNotNull(context.getExternalFilesDir(null)), FLUX_MODEL_DIRECTORY)
@@ -57,7 +56,7 @@ constructor(@ApplicationContext private val context: Context) : FluxDownloadRepo
       FluxModelManifest.parse(it.readText())
     }
 
-  override suspend fun check() = fileOperation.withLock { checkUnlocked() }
+  override suspend fun check() = ownership.exclusive { checkUnlocked() }
 
   private suspend fun checkUnlocked() = withContext(Dispatchers.IO) {
       state.value = FluxDownloadEvent.Checking
@@ -74,9 +73,9 @@ constructor(@ApplicationContext private val context: Context) : FluxDownloadRepo
       }
     }
 
-  override suspend fun download() = fileOperation.withLock {
+  override suspend fun download() = ownership.exclusive {
     withContext(Dispatchers.IO) {
-      stopRequested = false
+      cancellation.reset()
       try {
         val source = manifest()
         val metadata = resolveMetadata(source).also { lastMetadata = it }
@@ -95,7 +94,7 @@ constructor(@ApplicationContext private val context: Context) : FluxDownloadRepo
             progress[index] = FluxFileProgress(item.path, received, item.size)
             state.value = FluxDownloadEvent.Downloading(progress.toList())
           }
-          if (stopRequested) {
+          if (cancellation.isRequested) {
             state.value = FluxDownloadEvent.Paused
             return@withContext
           }
@@ -104,22 +103,26 @@ constructor(@ApplicationContext private val context: Context) : FluxDownloadRepo
           if (metadata.all(::isValid)) FluxDownloadEvent.Ready(metadata.sumOf { it.size })
           else FluxDownloadEvent.Error("Model validation failed")
       } catch (e: Exception) {
-        state.value = if (stopRequested) FluxDownloadEvent.Paused else FluxDownloadEvent.Error(e.message ?: "Download failed")
+        state.value = if (cancellation.isRequested) FluxDownloadEvent.Paused else FluxDownloadEvent.Error(e.message ?: "Download failed")
       }
     }
   }
 
-  override fun pause() { stopRequested = true }
+  override fun pause() { ownership.pause() }
 
-  override suspend fun cancel() = fileOperation.withLock { withContext(Dispatchers.IO) {
-    stopRequested = true
-    root.walkTopDown().filter { it.name.endsWith(".partial") }.forEach(File::delete)
-    checkUnlocked()
-  } }
+  override suspend fun cancel() {
+    // Signal and close current I/O first. Only its owner may then finish/close its streams.
+    ownership.cancel(
+      cleanup = { withContext(Dispatchers.IO) {
+        root.walkTopDown().filter { it.isFile && it.name.endsWith(".partial") }.forEach(File::delete)
+      } },
+      recheck = { checkUnlocked() },
+    )
+  }
 
   override suspend fun <T> withModelFilesLocked(
     block: suspend (File, FluxModelManifest, List<FluxFileMetadata>) -> T
-  ): T = fileOperation.withLock {
+  ): T = ownership.exclusive {
     val source = manifest()
     val metadata = lastMetadata ?: resolveMetadata(source).also { lastMetadata = it }
     block(root, source, metadata)
@@ -154,30 +157,47 @@ constructor(@ApplicationContext private val context: Context) : FluxDownloadRepo
       connection.setRequestProperty("Range", "bytes=$offset-")
       connection.setRequestProperty("Accept-Encoding", "identity")
     }
-    connection.connect()
-    if (offset > 0 && connection.responseCode != HttpURLConnection.HTTP_PARTIAL) {
-      partial.delete()
-      offset = 0
-      connection.disconnect()
-      return downloadOne(manifest, item, update)
-    }
-    require(connection.responseCode in 200..299) { "Download failed for ${item.path} (${connection.responseCode})" }
-    connection.inputStream.use { input ->
-      FileOutputStream(partial, offset > 0).use { outputStream ->
-        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-        var received = offset
-        while (!stopRequested) {
-          val count = input.read(buffer)
-          if (count < 0) break
-          outputStream.write(buffer, 0, count)
-          received += count
-          update(received)
-        }
-        outputStream.fd.sync()
+    val connectionHandle = Closeable { connection.disconnect() }
+    cancellation.attach(connectionHandle)
+    try {
+      connection.connect()
+      if (offset > 0 && connection.responseCode != HttpURLConnection.HTTP_PARTIAL) {
+        partial.delete()
+        offset = 0
+        cancellation.detach(connectionHandle)
+        connection.disconnect()
+        return downloadOne(manifest, item, update)
       }
+      require(connection.responseCode in 200..299) { "Download failed for ${item.path} (${connection.responseCode})" }
+      connection.inputStream.use { input ->
+        cancellation.attach(input)
+        try {
+          FileOutputStream(partial, offset > 0).use { outputStream ->
+            cancellation.attach(outputStream)
+            try {
+              val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+              var received = offset
+              while (!cancellation.isRequested) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                outputStream.write(buffer, 0, count)
+                received += count
+                update(received)
+              }
+              if (!cancellation.isRequested) outputStream.fd.sync()
+            } finally {
+              cancellation.detach(outputStream)
+            }
+          }
+        } finally {
+          cancellation.detach(input)
+        }
+      }
+    } finally {
+      cancellation.detach(connectionHandle)
+      connection.disconnect()
     }
-    connection.disconnect()
-    if (stopRequested) return
+    if (cancellation.isRequested) return
     require(partial.length() == item.size) { "Size validation failed for ${item.path}" }
     item.sha256?.let { require(sha256(partial) == it) { "SHA-256 validation failed for ${item.path}" } }
     require(partial.renameTo(output)) { "Could not atomically install ${item.path}" }
