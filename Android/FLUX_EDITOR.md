@@ -254,3 +254,65 @@ The debug build exposes **Developer verification — Reference VAE only** and re
 Physical Pixel verification remains required for all eight orientations with known images, crop inspection, GPU compilation, `[1,32,32,32]` finite output, runtime, memory, thermal behavior, cancellation, and the locally observed graph hash. Structural validation does not establish semantic editing quality.
 
 Patchification, latent batch normalization, `[1,256,128]` tokens, image IDs, reference/noise concatenation, `kce_*`, scheduling, denoising, VAE decoding, and image generation are deferred to Phase 2E or later. **Generate remains unconditionally disabled.**
+
+## Phase 2E reference-token preparation
+
+Phase 2E is based on evidence commit `94a4d9d537876150ec7e7e4f16a4c9a696b8ed1d` and the
+immutable base-model revision `e7b7dc27f91deacad38e78976d1f2b499d76a294`. The authoritative
+companion is `google-ai-edge/litert-samples` commit
+`f48a89e4f29a74ab51f29c311ac7a0e5e479d225`, specifically
+`compiled_model_api/text_to_image/flux2_klein_kotlin_gpu/conversion/gen_prep_klein.py` (SHA-256
+`1f2b3d902d4f36281e61447d86331e08bd1c61f20f9034896817c086ae1ab61d`) and
+`compiled_model_api/text_to_image/flux2_klein_kotlin_gpu/android/app/src/main/java/com/google/ai/edge/examples/flux2_klein/Flux2KleinGenerator.kt`.
+The pinned generator obtains patchification by probing `_patchify_latents` with a flat arange tensor
+and saving the result as a gather map. The pinned Android example gathers with that map, normalizes
+packed channel planes, and transposes channel-major packed storage to token-major storage. No
+behavior was inferred from mutable upstream or a generic FLUX implementation.
+
+The committed evidence manifest and binaries are staged unchanged by Gradle into generated build assets under `flux/reference/`, then parsed and validated before use. No runtime constant is duplicated in the source asset tree. The manifest pins epsilon
+`0.0001`, source `[1,32,32,32]`, packed `[1,128,16,16]`, and final `[1,256,128]` shapes. Its exact
+formula is `(packed[channel] - running_mean[channel]) / sqrt(running_variance[channel] +
+batch_norm_eps)`. `bn_std.bin` already stores that square root, so Android applies exactly
+`(packedValue - mean[packedChannel]) / std[packedChannel]`: it does not apply epsilon or square root
+a second time, gamma/weight is not applied, and beta/bias is not applied.
+
+* `bn_mean.bin`: 512 bytes, 128 little-endian FP32 values, SHA-256
+  `9027fac5727854f779ebbeae3032cfce0d47a11bc85f4329eb0a317c9ad90217`.
+* `bn_std.bin`: 512 bytes, 128 finite positive little-endian FP32 values, SHA-256
+  `e89b48bf701b864cc6cad73070e0e49052ee673d2c34ec2084ecf6386284d199`.
+* `patch_perm.bin`: 131,072 bytes, 32,768 little-endian signed int32 values forming the exact
+  bijection `0..32767`, SHA-256
+  `90c531082fddef4309f5ba43b8c898c823f049d2aa8951fb84e9cc4395942c3d`.
+
+For each packed output index Android performs the authoritative gather
+`packed[outputIndex] = source[patchPerm[outputIndex]]`; it does not replace the evidence with a
+shape-derived formula. It normalizes each `[128,16,16]` channel plane and writes final storage as
+`tokens[spatialIndex * 128 + packedChannel]`, producing 256 tokens of width 128. The typed latent and
+token boundaries copy caller arrays and reject wrong counts or non-finite values. Preparation runs
+off the UI thread and checks cooperative cancellation before each phase, every 1,024 elements while
+gathering and normalizing, before final validation, and before return. Full-size arrays remain local
+to verification and never enter Compose state; graph/environment/staged-image ownership continues
+to use deterministic `finally`/scoped cleanup.
+
+Debug builds expose **Developer verification — Reference VAE and tokens only**. It stages and
+preprocesses one image, executes `kv_vae_enc.tflite` exactly once on GPU FP32, validates the typed
+latent, strictly loads the constants, builds and validates tokens, emits only sanitized shapes,
+counts, timings, memory/thermal/device data and locally observed graph identity, then releases local
+resources. Release source exposes no verification action. Evidence consistency proves the shipped
+files and JVM transformation agree with the pinned record; physical-device compatibility remains a
+separate Pixel verification requirement.
+
+### Phase 2D locally observed Pixel result
+
+A successful local observation—not publisher verification or Phase 2E device proof—was recorded on
+a Pixel 10 Pro XL running Android API 37. `kv_vae_enc.tflite` ran with GPU FP32; its locally observed
+SHA-256 was `a9d7435e01f1266d8024a887c7bfbe0f58736436e9c10f8566ee2561c5db9df6`. The FP32 input was
+`[1,3,256,256]`; the FP32 output was `[1,32,32,32]` with 32,768 finite values. The sampled decode was
+640×360 (921,600 bytes), preprocessing took 139 ms, graph execution took 3,486 ms, and total time was
+3,680 ms. Approximate process PSS was 1,029,919 kB and thermal status remained 0 → 0. Approximately
+1.03 GB PSS is substantial and must be monitored before later transformer graphs are loaded.
+
+Image position IDs, noise creation, reference/noise concatenation, timestep/guidance tensors,
+`kce_*`, scheduling, diffusion/denoising, `kv_vae.tflite` decoding, output bitmaps, CPU/FP16/cloud/NPU/
+Tensor TPU fallback, and image generation remain explicitly deferred. **Generate remains
+unconditionally disabled in debug and release builds.**
