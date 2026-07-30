@@ -58,6 +58,40 @@ internal fun FluxDeveloperVerificationSection(
       }) { Text("Copy diagnostic summary") }
     }
     FluxReferenceVaeVerificationSection(modelReady, referenceUri)
+    FluxTransformerPrepVerificationSection(modelReady, referenceUri, prompt)
+  }
+}
+
+/** Phase 2F remains a deliberately separate debug-only terminal boundary. */
+@Composable
+private fun FluxTransformerPrepVerificationSection(
+  modelReady: Boolean,
+  referenceUri: Uri?,
+  prompt: String,
+  viewModel: FluxTransformerPrepVerificationViewModel = hiltViewModel(),
+) {
+  val state by viewModel.state.collectAsState()
+  val context = LocalContext.current
+  Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+    Text("Developer verification — Editing transformer prep only")
+    Text("Uses synthetic zero noise and a synthetic zero timestep embedding; it does not generate an image.")
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      Button(
+        onClick = { referenceUri?.let { viewModel.run(it, prompt, modelReady) } },
+        enabled = modelReady && referenceUri != null && prompt.isNotBlank() && !state.running,
+      ) { Text("Run Transformer Prep") }
+      OutlinedButton(onClick = viewModel::cancel, enabled = state.running) { Text("Cancel") }
+    }
+    Text("Current stage: ${state.stage}")
+    Text("Elapsed: ${state.elapsedMillis} ms")
+    if (state.running) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+    state.error?.let { Text(it) }
+    if (state.summary.isNotEmpty()) {
+      OutlinedTextField(state.summary, {}, readOnly = true, label = { Text("Sanitized transformer-prep diagnostic") }, modifier = Modifier.fillMaxWidth())
+      OutlinedButton(onClick = {
+        context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("FLUX transformer-prep diagnostic", state.summary))
+      }) { Text("Copy diagnostic summary") }
+    }
   }
 }
 

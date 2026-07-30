@@ -1,5 +1,48 @@
 # FLUX.2 Klein LiteRT image editor
 
+## Phase 2F: editing transformer preparation (debug only)
+
+Phase 2F is based only on `google-ai-edge/litert-samples` immutable commit
+`f48a89e4f29a74ab51f29c311ac7a0e5e479d225`. The exact inspected files are
+`compiled_model_api/text_to_image/flux2_klein_kotlin_gpu/android/app/src/main/java/com/google/ai/edge/examples/flux2_klein/Flux2KleinGenerator.kt`,
+`compiled_model_api/text_to_image/flux2_klein_kotlin_gpu/conversion/chunked_export_klein.py`,
+`compiled_model_api/text_to_image/flux2_klein_kotlin_gpu/conversion/build_klein_dit.py`, and
+`compiled_model_api/text_to_image/flux2_klein_kotlin_gpu/conversion/gen_prep_klein.py`. Mutable
+upstream `main` and generic FLUX implementations are not evidence for this contract.
+
+The editing sequence is exactly `cat([noiseTokens, referenceTokens], image-token axis)`: noise
+occupies tokens 0–255 and reference tokens occupy 256–511. Both inputs are `[1,256,128]` FP32
+(32,768 elements), and the owned, finite result is `[1,512,128]` FP32 (65,536 elements). Assembly
+uses checked arithmetic, defensive ownership, bounded cancellation checks, and never mutates either
+typed input.
+
+The sole Phase 2F graph call is `kce_prep.tflite(editingImageTokens,
+promptConditioning, timestepEmbedding)`, in that exact order. Shapes are `[1,512,128]`,
+`[1,512,7680]`, and `[1,3072]`. The graph must return exactly five ordered finite FP32 outputs:
+image hidden `[1,512,3072]` (1,572,864), text hidden `[1,512,3072]` (1,572,864), image modulation
+`[1,1,18432]` (18,432), text modulation `[1,1,18432]` (18,432), and single-stream modulation
+`[1,1,9216]` (9,216). Runtime resolution retains the app-owned model-file lock, checks the
+canonical path and authoritative manifest size, and shared GPU FP32 execution remains sequential
+with at most one compiled graph resident. Inputs, outputs, compiled graph, and environment are
+released in native cleanup order on success, failure, or cancellation; no later graph is run.
+
+The developer diagnostic alone creates `syntheticZeroNoiseTokens` (32,768 zeros) and
+`syntheticZeroTimestepEmbedding` (3,072 zeros). These establish only structural device verification.
+Production random noise, distributions, scheduler sigmas/deltas, timestep values, and learned
+production timestep embeddings remain unimplemented. A successful Pixel run would prove only that
+the pinned prep graph compiles/runs on that device with GPU FP32 and returns five correctly shaped,
+finite buffers. It would not prove semantic output, scheduler/timestep/noise parity, diffusion,
+transformer-block execution, decoding, generation, or end-to-end memory safety.
+
+Major host arrays are: prompt conditioning 3,932,160 floats / 15,728,640 bytes; reference tokens
+32,768 / 131,072; diagnostic noise 32,768 / 131,072; editing tokens 65,536 / 262,144; synthetic
+timestep 3,072 / 12,288; each image/text hidden output 1,572,864 / 6,291,456; each image/text
+modulation 18,432 / 73,728; and single modulation 9,216 / 36,864. These are host-array sizes, not
+GPU/native peak-memory claims. Outputs are validated and released immediately and no tensor array
+is stored in Compose state. Double-stream, single-stream, final, scheduler/update, and VAE decoder
+graphs remain deferred. **Generate remains disabled.** Earlier Phase 2E and physical Pixel results
+below remain unchanged.
+
 Phase 1 adds the editor input UI and secure, resumable model management. It does **not** run FLUX
 inference, produce an output image, or use a cloud fallback.
 
