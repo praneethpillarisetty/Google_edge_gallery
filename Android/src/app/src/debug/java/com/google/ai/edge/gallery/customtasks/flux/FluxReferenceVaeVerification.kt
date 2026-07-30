@@ -10,6 +10,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.ai.edge.gallery.customtasks.flux.image.FluxReferenceImagePreprocessor
 import com.google.ai.edge.gallery.customtasks.flux.image.FluxReferenceImageSourceStager
+import com.google.ai.edge.gallery.customtasks.flux.image.FluxReferenceConstantsLoader
+import com.google.ai.edge.gallery.customtasks.flux.image.FluxReferenceTokenEncoder
+import com.google.ai.edge.gallery.customtasks.flux.image.FluxReferenceTokenStage
 import com.google.ai.edge.gallery.customtasks.flux.image.FluxReferenceVaeEncoder
 import com.google.ai.edge.gallery.customtasks.flux.runtime.FluxLiteRtEnvironment
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -22,12 +25,17 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
 
 enum class FluxReferenceVaeStage {
   IDLE, VALIDATING_FILES, READING_ORIENTATION, DECODING_IMAGE, APPLYING_ORIENTATION,
   CENTER_CROPPING, RESIZING, BUILDING_INPUT, HASHING_VAE_GRAPH, COMPILING_VAE,
-  RUNNING_VAE, VALIDATING_OUTPUT, COMPLETE, CANCELLED, ERROR,
+  RUNNING_VAE, VALIDATING_OUTPUT, LOADING_REFERENCE_CONSTANTS,
+  PATCHIFYING_REFERENCE_LATENT, NORMALIZING_REFERENCE_CHANNELS,
+  BUILDING_REFERENCE_TOKENS, VALIDATING_REFERENCE_TOKENS,
+  COMPLETE, CANCELLED, ERROR,
 }
 
 data class FluxReferenceVaeVerificationState(
@@ -46,6 +54,7 @@ class FluxReferenceVaeVerificationViewModel @Inject constructor(
   private val mutableState = MutableStateFlow(FluxReferenceVaeVerificationState())
   val state = mutableState.asStateFlow()
   private var job: Job? = null
+  private val constantsLoader by lazy { FluxReferenceConstantsLoader(context.assets) }
   private val hashes = mutableMapOf<String, String>()
   private val hasher = FluxStreamingHasher(
     object : FluxHashCache {
@@ -102,16 +111,47 @@ class FluxReferenceVaeVerificationViewModel @Inject constructor(
                   coroutineContext.ensureActive()
                   val graphMillis = elapsed(graphStarted)
                   update(FluxReferenceVaeStage.VALIDATING_OUTPUT, started)
+                  coroutineContext.ensureActive()
+                  update(FluxReferenceVaeStage.LOADING_REFERENCE_CONSTANTS, started)
+                  val constantsStarted = System.nanoTime()
+                  val constants = withContext(Dispatchers.Default) {
+                    coroutineContext.ensureActive()
+                    constantsLoader.load()
+                  }
+                  val constantsMillis = elapsed(constantsStarted)
+                  var patchStarted = 0L
+                  var patchMillis = 0L
+                  var normalizationStarted = 0L
+                  val tokenStarted = System.nanoTime()
+                  val tokens = withContext(Dispatchers.Default) {
+                    FluxReferenceTokenEncoder(constants).encode(latent) { stage ->
+                      when (stage) {
+                        FluxReferenceTokenStage.PATCHIFYING_REFERENCE_LATENT -> patchStarted = System.nanoTime()
+                        FluxReferenceTokenStage.NORMALIZING_REFERENCE_CHANNELS -> {
+                          patchMillis = elapsed(patchStarted)
+                          normalizationStarted = System.nanoTime()
+                        }
+                        else -> Unit
+                      }
+                      update(FluxReferenceVaeStage.valueOf(stage.name), started)
+                    }
+                  }
+                  val normalizationAndTokenMillis = elapsed(normalizationStarted)
+                  val tokenMillis = elapsed(tokenStarted)
                   """backend: GPU FP32
                         |graph: ${graph.name}
                         |locally observed SHA-256 (not publisher-verified): $hash
-                        |pinned input contract: ${tensor.shape} FP32
-                        |pinned output contract: ${latent.shape} FP32
-                        |runtime output elements: ${latent.values.size}
-                        |runtime all values finite: true
-                        |sampled decode estimate: ${tensor.decodePlan.estimatedWidth}x${tensor.decodePlan.estimatedHeight}, ${tensor.decodePlan.estimatedArgbBytes} bytes
+                        |source latent shape: ${latent.shape}
+                        |token shape: ${tokens.shape}
+                        |token elements: ${tokens.size}
+                        |all token values finite: ${tokens.allFinite()}
+                        |constants revision: ${constants.revision}
                         |preprocessing: $preprocessingMillis ms
-                        |graph: $graphMillis ms
+                        |VAE graph: $graphMillis ms
+                        |constant loading: $constantsMillis ms
+                        |patchification: $patchMillis ms
+                        |normalization/token building: $normalizationAndTokenMillis ms
+                        |token preparation total: $tokenMillis ms
                         |total: ${elapsed(started)} ms
                         |Java heap: ${usedHeap()} bytes
                         |process PSS: ${Debug.getPss()} kB
@@ -132,15 +172,15 @@ class FluxReferenceVaeVerificationViewModel @Inject constructor(
         mutableState.value = FluxReferenceVaeVerificationState(
           stage = FluxReferenceVaeStage.CANCELLED,
           elapsedMillis = elapsed(started),
-          error = "Reference VAE verification cancelled.",
+          error = "Reference VAE and token verification cancelled.",
         )
       } catch (oom: OutOfMemoryError) {
-        mutableState.value = failure("Not enough memory for reference VAE verification.", started)
+        mutableState.value = failure("Not enough memory for reference VAE and token verification.", started)
       } catch (linkage: LinkageError) {
         mutableState.value = failure("LiteRT native linkage failed.", started)
       } catch (failure: Exception) {
         mutableState.value = failure(
-          failure.message ?: "Reference VAE verification failed.",
+          failure.message ?: "Reference VAE and token verification failed.",
           started,
         )
       }

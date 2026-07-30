@@ -45,6 +45,22 @@ val stageStandaloneLiteRtNative by tasks.registering(Sync::class) {
   into(layout.buildDirectory.dir("generated/standaloneLiteRtNative"))
 }
 
+val fluxReferenceEvidenceDirectory =
+  rootProject.layout.projectDirectory.dir("../../evidence/flux-reference-constants")
+val fluxReferenceAssetNames =
+  listOf("bn_mean.bin", "bn_std.bin", "patch_perm.bin", "flux_reference_constants.json")
+val generatedFluxReferenceAssets = layout.buildDirectory.dir("generated/fluxReferenceAssets")
+val stageFluxReferenceAssets by tasks.registering(Sync::class) {
+  val evidenceFiles = fluxReferenceAssetNames.map(fluxReferenceEvidenceDirectory::file)
+  inputs.files(evidenceFiles)
+  outputs.dir(generatedFluxReferenceAssets)
+  from(fluxReferenceEvidenceDirectory) {
+    include(fluxReferenceAssetNames)
+    into("flux/reference")
+  }
+  into(generatedFluxReferenceAssets)
+}
+
 android {
   namespace = "com.google.ai.edge.gallery"
   compileSdk { this.version = release(37) { minorApiLevel = 0 } }
@@ -97,11 +113,18 @@ android {
   }
   sourceSets.named("main") {
     jniLibs.srcDir(layout.buildDirectory.dir("generated/standaloneLiteRtNative"))
+    assets.srcDir(stageFluxReferenceAssets)
   }
 }
 
 tasks.matching { it.name.endsWith("JniLibFolders") }.configureEach {
   dependsOn(stageStandaloneLiteRtNative)
+}
+tasks.matching {
+  (it.name.startsWith("merge") && it.name.endsWith("Assets")) ||
+    it.name.contains("lint", ignoreCase = true)
+}.configureEach {
+  dependsOn(stageFluxReferenceAssets)
 }
 
 dependencies {
