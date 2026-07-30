@@ -17,9 +17,11 @@ import com.google.ai.edge.gallery.customtasks.flux.prompt.FluxPromptAssetResolve
 import com.google.ai.edge.gallery.customtasks.flux.prompt.FluxPromptConditioner
 import com.google.ai.edge.gallery.customtasks.flux.runtime.FluxLiteRtEnvironment
 import com.google.ai.edge.gallery.customtasks.flux.transformer.FluxEditingImageTokens
+import com.google.ai.edge.gallery.customtasks.flux.transformer.FluxPhase2gEvidenceLoader
 import com.google.ai.edge.gallery.customtasks.flux.transformer.FluxSyntheticDiagnosticInputs
 import com.google.ai.edge.gallery.customtasks.flux.transformer.FluxTransformerPrepContracts
 import com.google.ai.edge.gallery.customtasks.flux.transformer.FluxTransformerPrepRunner
+import com.google.ai.edge.gallery.customtasks.flux.transformer.FluxTransformerDenoiser
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -56,13 +58,17 @@ class FluxTransformerPrepVerificationViewModel @Inject constructor(
   val state = mutableState.asStateFlow()
   private var job: Job? = null
   private val constantsLoader by lazy { FluxReferenceConstantsLoader(context.assets) }
+  private val phase2gLoader by lazy { FluxPhase2gEvidenceLoader(context.assets) }
   private val hashCache = mutableMapOf<String, String>()
   private val hasher = FluxStreamingHasher(object : FluxHashCache {
     override fun get(identity: FluxHashIdentity) = hashCache[identity.key]
     override fun put(identity: FluxHashIdentity, hash: String) { hashCache[identity.key] = hash }
   })
 
-  fun run(uri: Uri, prompt: String, modelReadyHint: Boolean) {
+  fun run(uri: Uri, prompt: String, modelReadyHint: Boolean) = runInternal(uri, prompt, modelReadyHint, false)
+  fun runDenoising(uri: Uri, prompt: String, modelReadyHint: Boolean) = runInternal(uri, prompt, modelReadyHint, true)
+
+  private fun runInternal(uri: Uri, prompt: String, modelReadyHint: Boolean, denoise: Boolean) {
     if (job?.isActive == true) return
     if (!modelReadyHint || prompt.isBlank()) {
       mutableState.value = error("Model repository must be Ready and prompt must be non-empty.")
@@ -135,11 +141,35 @@ class FluxTransformerPrepVerificationViewModel @Inject constructor(
               stage(FluxTransformerPrepVerificationStage.COMPILING_TRANSFORMER_PREP, started)
               val prepStart = System.nanoTime()
               stage(FluxTransformerPrepVerificationStage.RUNNING_TRANSFORMER_PREP, started)
-              val report = prep.run(prepGraph, editing, conditioning, timestep)
-              timings["prep compile/run"] = elapsed(prepStart)
+              val report = if (denoise) null else prep.run(prepGraph, editing, conditioning, timestep)
+              if (!denoise) timings["prep compile/run"] = elapsed(prepStart)
               stage(FluxTransformerPrepVerificationStage.VALIDATING_TRANSFORMER_PREP_OUTPUTS, started)
               coroutineContext.ensureActive()
-              buildSummary(hash, conditioning.shape, reference.shape, editing.shape, report.outputContracts.map { it.shape to it.elements }, timings, started, thermalBefore)
+              if (denoise) {
+                val graphTimings = linkedMapOf<String, Long>()
+                var graphStarted = System.nanoTime()
+                val denoising = FluxTransformerDenoiser(graphRunner).run(root, manifest, phase2gLoader.load(), conditioning, reference) { step, graph ->
+                  val now = System.nanoTime()
+                  if (graphTimings.isNotEmpty()) graphTimings[graphTimings.keys.last()] = (now - graphStarted) / 1_000_000
+                  stage(FluxTransformerPrepVerificationStage.RUNNING_TRANSFORMER_PREP, started)
+                  graphTimings["step $step $graph"] = 0
+                  graphStarted = now
+                }
+                graphTimings[graphTimings.keys.last()] = elapsed(graphStarted)
+                """backend: GPU FP32
+                  |verification: transformer denoising only
+                  |steps: ${denoising.steps}
+                  |initial latent: ${denoising.initialShape}; 32768 elements
+                  |final latent: ${denoising.finalShape}; 32768 elements
+                  |all values finite: ${denoising.allFinite}
+                  |${graphTimings.entries.joinToString("\n") { "${it.key}: ${it.value} ms" }}
+                  |total: ${elapsed(started)} ms
+                  |Java heap: ${Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()} bytes
+                  |process PSS: ${Debug.getPss()} kB
+                  |thermal: $thermalBefore -> ${thermal()}
+                  |cancellation available: yes
+                  |VAE decoding: not run; Generate: disabled""".trimMargin()
+              } else buildSummary(hash, conditioning.shape, reference.shape, editing.shape, requireNotNull(report).outputContracts.map { it.shape to it.elements }, timings, started, thermalBefore)
             } finally {
               environment.close()
             }
