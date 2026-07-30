@@ -29,7 +29,8 @@ released in native cleanup order on success, failure, or cancellation; no later 
 The developer diagnostic alone creates `syntheticZeroNoiseTokens` (32,768 zeros) and
 `syntheticZeroTimestepEmbedding` (3,072 zeros). These establish only structural device verification.
 Production random noise, distributions, scheduler sigmas/deltas, timestep values, and learned
-production timestep embeddings remain unimplemented. A successful Pixel run would prove only that
+production timestep embeddings were deferred at the Phase 2F checkpoint and are now supplied by
+the authoritative Phase 2G evidence described below. A successful Pixel prep-only run proves only that
 the pinned prep graph compiles/runs on that device with GPU FP32 and returns five correctly shaped,
 finite buffers. It would not prove semantic output, scheduler/timestep/noise parity, diffusion,
 transformer-block execution, decoding, generation, or end-to-end memory safety.
@@ -42,6 +43,17 @@ GPU/native peak-memory claims. Outputs are validated and released immediately an
 is stored in Compose state. Double-stream, single-stream, final, scheduler/update, and VAE decoder
 graphs remain deferred. **Generate remains disabled.** Earlier Phase 2E and physical Pixel results
 below remain unchanged.
+
+### Phase 2F locally observed Pixel 10 Pro XL result
+
+The prep-only debug control was locally observed on a Pixel 10 Pro XL with GPU FP32. The locally
+observed (not publisher-verified) `kce_prep.tflite` SHA-256 was
+`5644224c9c930cd79bb98122cf70e30cee6103f35e9ae8d73acfa0d0c254e43c`. Prompt conditioning was
+`[1,512,7680]`; reference tokens were `[1,256,128]`; the combined editing sequence was
+`[1,512,128]`, with noise at positions 0–255 and reference at 256–511. The five outputs matched
+`[1,512,3072]`, `[1,512,3072]`, `[1,1,18432]`, `[1,1,18432]`, and `[1,1,9216]`, and all values
+were finite. This result is retained as a local physical-device observation, not a publisher hash
+or a Phase 2G physical-device result.
 
 Phase 1 adds the editor input UI and secure, resumable model management. It does **not** run FLUX
 inference, produce an output image, or use a cloud fallback.
@@ -359,3 +371,74 @@ Image position IDs, noise creation, reference/noise concatenation, timestep/guid
 `kce_*`, scheduling, diffusion/denoising, `kv_vae.tflite` decoding, output bitmaps, CPU/FP16/cloud/NPU/
 Tensor TPU fallback, and image generation remain explicitly deferred. **Generate remains
 unconditionally disabled in debug and release builds.**
+
+## Phase 2G — authoritative editing-transformer denoising verification
+
+Phase 2G uses host inputs generated for image editing with seed `1234` and four steps from
+`black-forest-labs/FLUX.2-klein-4B` revision
+`e7b7dc27f91deacad38e78976d1f2b499d76a294`. The generating algorithm is pinned to
+`google-ai-edge/litert-samples` revision
+`f48a89e4f29a74ab51f29c311ac7a0e5e479d225`; the unmodified
+`conversion/gen_prep_klein.py` SHA-256 is
+`1f2b3d902d4f36281e61447d86331e08bd1c61f20f9034896817c086ae1ab61d`.
+
+The packaged, strictly validated little-endian FP32 evidence is:
+
+| asset | shape | elements | bytes | SHA-256 |
+|---|---:|---:|---:|---|
+| `latents0.bin` | `[1,256,128]` | 32,768 | 131,072 | `81c0e15a45448c9d8e8e449d02146c33fb7561aee039b0755cd5168e4ee2956b` |
+| `temb.bin` | `[4,3072]` | 12,288 | 49,152 | `c61e8934b1474620c4fe5b1cd387005f4673dae939b5e5432bb38fd8c3bc1cce` |
+| `dsigma.bin` | `[4]` | 4 | 16 | `f69390537e24ea71a5b3c46954fc923aae52d40e049fa054e289134aa0ea7cfa` |
+| `cos.bin` | `[1,1024,1,64]` | 65,536 | 262,144 | `d45b2bb837a8e543ceae238e8dc72cbfcdbec7268fa691b722994a1f08ab68cc` |
+| `sin.bin` | `[1,1024,1,64]` | 65,536 | 262,144 | `657c868835d8622d791eef27dead19b2dad910014e6bd39343e6721efc0b13a3` |
+
+The loader rejects unknown or missing JSON fields, requires `generatedAt` to parse as UTC without
+pinning it to one generation instant, validates metadata hashes against the independently embedded
+contracts, and hashes while parsing each binary in one bounded streaming pass. Partial floats,
+trailing bytes, non-finite values, and zero/positive scheduler deltas are rejected. Only a fully
+validated result is cached. The immutable cache necessarily retains about 690 KiB of tensor values
+for the verification job; raw file bytes are not retained. Public access is defensive, so temporary
+graph-input copies are scoped to execution and are never placed in Compose state.
+
+For each of exactly four steps, noise `[1,256,128]` is concatenated before the reference tokens
+`[1,256,128]`. `kce_prep` receives that `[1,512,128]` sequence, actual prompt conditioning
+`[1,512,7680]`, and the matching `temb` row `[1,3072]`. Its ordered outputs are image hidden
+`[1,512,3072]`, text hidden `[1,512,3072]`, image modulation `[1,1,18432]`, text modulation
+`[1,1,18432]`, and single modulation `[1,1,9216]`. `kce_double0` then `kce_double1` each receive
+`image, text, cos, sin, image-modulation, text-modulation` and return updated image then text.
+The host concatenates **text before image** into `[1,1024,3072]`. `kce_single0` through
+`kce_single3` each receive `joint, cos, sin, single-modulation` and replace joint.
+`kce_final` receives `joint, temb` and returns `[1,512,128]`. Only its first 256 tokens update noise:
+`latents[i] = latents[i] + dsigma[step] * noisePrediction[i]`. The reference-token prediction is
+intentionally discarded.
+
+The authoritative order is therefore `kce_prep`, `kce_double0`, `kce_double1`, host text/image
+concatenation, `kce_single0`, `kce_single1`, `kce_single2`, `kce_single3`, and `kce_final`, repeated
+four times with row `step` from both `temb` and `dsigma`. Every boundary validates exact element
+counts and finiteness.
+
+Execution remains mandatory GPU FP32 through the shared LiteRT environment and its runtime-wide
+mutex. A second complete transformer verification is also held behind a process-wide coroutine
+mutex. Each graph is compiled, run, read, and closed before the next graph is opened. Input buffers
+close first, output buffers second, and the compiled model last. Cancellation
+is checked before graphs, between graphs and steps, and during the Euler update; buffers, compiled
+models, and the environment are closed deterministically on success, error, or cancellation.
+Sequential residency limits graph memory, but individual graphs remain large and four steps can
+cause high Java/native memory pressure and sustained thermal load. Debug verification should be
+run only with the repository Ready, a selected reference image, a non-empty nonsensitive prompt,
+and no other FLUX operation; cancellation remains available throughout.
+
+In a debug build, download the repository until it reports Ready, select one reference image, enter
+a non-empty nonsensitive prompt, then use **Developer verification — Transformer denoising only**.
+The panel reports step 1–4, graph name, completed graph count, elapsed time, cancellation availability,
+and an indeterminate progress bar. Its copy action contains only scalar shapes, counts, hashes,
+timings, memory/PSS, thermal, device/API, and completion metadata. Release builds use the no-op
+source-set implementation and contain no developer verification action.
+
+Phase 2G proves that supplied authoritative scheduling inputs can drive the complete editing
+transformer chain with actual Phase 2F prompt/reference preparation, correct ordered wiring, FP32
+GPU execution, finite intermediate tensors, and the pinned four-step Euler scheduler. Fake-backed
+JVM tests prove host contracts and failure cleanup only; they do **not** claim physical Pixel GPU
+correctness, numerical quality, acceptable memory use, or thermal safety. `kv_vae.tflite` output
+VAE decoding is deferred, no output bitmap or placeholder is produced, and **Generate remains
+disabled**.

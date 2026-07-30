@@ -59,6 +59,38 @@ internal fun FluxDeveloperVerificationSection(
     }
     FluxReferenceVaeVerificationSection(modelReady, referenceUri)
     FluxTransformerPrepVerificationSection(modelReady, referenceUri, prompt)
+    FluxTransformerDenoisingVerificationSection(modelReady, referenceUri, prompt)
+  }
+}
+
+@Composable
+private fun FluxTransformerDenoisingVerificationSection(
+  modelReady: Boolean,
+  referenceUri: Uri?,
+  prompt: String,
+  viewModel: FluxTransformerDenoisingVerificationViewModel = hiltViewModel(),
+) {
+  val state by viewModel.state.collectAsState()
+  val context = LocalContext.current
+  Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+    Text("Developer verification — Transformer denoising only")
+    Text("Runs four GPU FP32 steps without VAE decoding or an output image.")
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      Button(onClick = { referenceUri?.let { viewModel.run(it, prompt, modelReady) } }, enabled = modelReady && referenceUri != null && prompt.isNotBlank() && !state.running) { Text("Run Transformer Denoising") }
+      OutlinedButton(onClick = viewModel::cancel, enabled = state.running) { Text("Cancel") }
+    }
+    Text("Current stage: ${state.stage}")
+    Text("Current step: ${state.currentStep}/4")
+    Text("Current graph: ${state.currentGraph}")
+    Text("Completed graphs: ${state.completedGraphs}/32")
+    Text("Overall elapsed: ${state.elapsedMillis} ms")
+    Text("Cancellation available: ${state.cancellationAvailable}")
+    if (state.running) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+    state.error?.let { Text(it) }
+    if (state.summary.isNotEmpty()) {
+      OutlinedTextField(state.summary, {}, readOnly = true, label = { Text("Sanitized denoising diagnostic") }, modifier = Modifier.fillMaxWidth())
+      OutlinedButton(onClick = { context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("FLUX denoising diagnostic", state.summary)) }) { Text("Copy diagnostic summary") }
+    }
   }
 }
 
