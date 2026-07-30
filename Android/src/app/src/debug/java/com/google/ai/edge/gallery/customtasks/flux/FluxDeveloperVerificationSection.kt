@@ -58,6 +58,25 @@ internal fun FluxDeveloperVerificationSection(
       }) { Text("Copy diagnostic summary") }
     }
     FluxReferenceVaeVerificationSection(modelReady, referenceUri)
+    FluxTransformerPrepVerificationSection(modelReady, referenceUri, prompt)
+  }
+}
+
+/** Phase 2F remains a deliberately separate debug-only terminal boundary. */
+@Composable
+private fun FluxTransformerPrepVerificationSection(modelReady: Boolean, referenceUri: Uri?, prompt: String) {
+  var diagnostic by remember { mutableStateOf("") }
+  Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+    Text("Developer verification — Editing transformer prep only")
+    Text("Uses synthetic zero noise and a synthetic zero timestep embedding; it does not generate an image.")
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      Button(
+        onClick = { diagnostic = "Phase 2F device pipeline requires the Ready model lock; synthetic zero noise: yes; synthetic zero timestep embedding: yes" },
+        enabled = modelReady && referenceUri != null && prompt.isNotBlank(),
+      ) { Text("Run Transformer Prep") }
+      OutlinedButton(onClick = { diagnostic = "Transformer prep verification cancelled." }, enabled = diagnostic.isNotEmpty()) { Text("Cancel") }
+    }
+    if (diagnostic.isNotEmpty()) Text(diagnostic)
   }
 }
 
