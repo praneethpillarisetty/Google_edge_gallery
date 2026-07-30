@@ -3,31 +3,44 @@ package com.google.ai.edge.gallery.customtasks.flux.transformer
 
 import android.content.res.AssetManager
 import java.io.InputStream
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.security.MessageDigest
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
-class FluxPhase2gEvidenceException(message: String, cause: Throwable? = null) :
-  IllegalArgumentException(message, cause)
+class FluxPhase2gEvidenceException(message: String, cause: Throwable? = null) : IllegalArgumentException(message, cause)
 
-/** Validated immutable Phase 2G host inputs. Array access is always defensively owned. */
-class FluxPhase2gEvidence internal constructor(
-  private val initial: FloatArray,
-  private val timestepRows: FloatArray,
-  private val sigmaDeltas: FloatArray,
+/** Immutable validated Phase 2G tensors. Public access never exposes a backing array. */
+class FluxPhase2gEvidence private constructor(
+  private val latents: FloatArray,
+  private val temb: FloatArray,
+  private val deltas: FloatArray,
   private val rotaryCos: FloatArray,
   private val rotarySin: FloatArray,
 ) {
-  fun initialLatents() = initial.copyOf()
-  fun timestep(step: Int) = timestepRows.copyOfRange(step * 3_072, (step + 1) * 3_072)
-  fun dsigma(step: Int) = sigmaDeltas[step]
-  fun cos() = rotaryCos.copyOf()
-  fun sin() = rotarySin.copyOf()
+  fun initialLatents(): FloatArray = latents.copyOf()
+  fun timestep(step: Int): FloatArray {
+    require(step in 0 until STEPS)
+    return temb.copyOfRange(step * TIMESTEP_SIZE, (step + 1) * TIMESTEP_SIZE)
+  }
+  fun dsigma(step: Int): Float { require(step in 0 until STEPS); return deltas[step] }
+  fun cos(): FloatArray = rotaryCos.copyOf()
+  fun sin(): FloatArray = rotarySin.copyOf()
+
+  companion object {
+    private const val STEPS = 4
+    private const val TIMESTEP_SIZE = 3_072
+    internal fun validated(latents: FloatArray, temb: FloatArray, deltas: FloatArray, cos: FloatArray, sin: FloatArray) =
+      FluxPhase2gEvidence(latents, temb, deltas, cos, sin)
+  }
 }
 
-/** Strict, platform-neutral parser for the supplied authoritative evidence. */
+data class FluxPhase2gEvidenceHashes(
+  val latents0: String, val temb: String, val dsigma: String, val cos: String, val sin: String,
+)
+
+/** Strict parser. Hashing and FP32 conversion share one bounded streaming pass per artifact. */
 object FluxPhase2gEvidenceParser {
   const val DIRECTORY = "flux/phase2g"
   const val BASE_REVISION = "e7b7dc27f91deacad38e78976d1f2b499d76a294"
@@ -42,38 +55,101 @@ object FluxPhase2gEvidenceParser {
     "sin.bin" to Contract(listOf(1, 1024, 1, 64), 65_536, 262_144, "657c868835d8622d791eef27dead19b2dad910014e6bd39343e6721efc0b13a3"),
   )
 
-  fun parse(open: (String) -> InputStream): FluxPhase2gEvidence = try {
-    val metadata = open("flux_phase2g_constants.json").use { json.decodeFromString<Metadata>(it.readBytes().decodeToString()) }
+  fun parse(open: (String) -> InputStream, cancellationCheck: () -> Unit = {}): FluxPhase2gEvidence = try {
+    cancellationCheck()
+    val metadataBytes = readBounded(open("flux_phase2g_constants.json"), MAX_METADATA_BYTES, cancellationCheck)
+    val metadata = json.decodeFromString<Metadata>(metadataBytes.decodeToString())
     validateMetadata(metadata)
-    val values = contracts.mapValues { (name, contract) ->
-      val bytes = open(name).use { it.readBytes() }
-      if (bytes.size != contract.bytes) fail("$name has an invalid byte count.")
-      val digest = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-      if (digest != contract.sha) fail("$name failed SHA-256 validation.")
-      ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).let { buffer -> FloatArray(contract.count) { buffer.float } }
-        .also { if (it.any { value -> !value.isFinite() }) fail("$name contains a non-finite value.") }
+    val tensors = contracts.mapValues { (name, contract) ->
+      cancellationCheck()
+      readTensor(open(name), name, contract, metadata.artifacts.getValue(name).sha256, cancellationCheck)
     }
-    if (values.getValue("dsigma.bin").any { it >= 0f }) fail("dsigma.bin values must be negative.")
-    FluxPhase2gEvidence(values.getValue("latents0.bin"), values.getValue("temb.bin"), values.getValue("dsigma.bin"), values.getValue("cos.bin"), values.getValue("sin.bin"))
+    val dsigma = tensors.getValue("dsigma.bin")
+    validateDsigma(dsigma)
+    FluxPhase2gEvidence.validated(
+      tensors.getValue("latents0.bin"), tensors.getValue("temb.bin"), dsigma,
+      tensors.getValue("cos.bin"), tensors.getValue("sin.bin"),
+    )
   } catch (known: FluxPhase2gEvidenceException) { throw known }
-    catch (failure: Exception) { throw FluxPhase2gEvidenceException("FLUX Phase 2G evidence validation failed.", failure) }
+    catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+    catch (failure: Exception) { throw FluxPhase2gEvidenceException("Phase 2G evidence validation failed.", failure) }
+
+  fun expectedHashes() = FluxPhase2gEvidenceHashes(
+    contracts.getValue("latents0.bin").sha, contracts.getValue("temb.bin").sha,
+    contracts.getValue("dsigma.bin").sha, contracts.getValue("cos.bin").sha,
+    contracts.getValue("sin.bin").sha,
+  )
+
+  internal fun validateDsigma(values: FloatArray) {
+    if (values.size != 4 || values.any { !it.isFinite() || it >= 0f })
+      fail("dsigma.bin must contain exactly four finite, strictly negative values.")
+  }
+
+  private fun readTensor(input: InputStream, name: String, contract: Contract, metadataSha: String, check: () -> Unit): FloatArray = input.use {
+    val digest = MessageDigest.getInstance("SHA-256")
+    val values = FloatArray(contract.count)
+    val word = ByteArray(4)
+    var count = 0
+    while (count < contract.count) {
+      check()
+      var used = 0
+      while (used < 4) {
+        val read = it.read(word, used, 4 - used)
+        if (read < 0) fail("$name is truncated or contains a partial float.")
+        used += read
+      }
+      digest.update(word)
+      val bits = (word[0].toInt() and 0xff) or ((word[1].toInt() and 0xff) shl 8) or
+        ((word[2].toInt() and 0xff) shl 16) or ((word[3].toInt() and 0xff) shl 24)
+      val value = Float.fromBits(bits)
+      if (!value.isFinite()) fail("$name contains a non-finite value.")
+      values[count++] = value
+    }
+    if (it.read() != -1) fail("$name contains trailing bytes.")
+    val actual = digest.digest().toHex()
+    if (actual != metadataSha || actual != contract.sha) fail("$name failed SHA-256 validation.")
+    values
+  }
 
   private fun validateMetadata(m: Metadata) {
-    if (m.schemaVersion != 1 || m.mode != "image-editing" || m.seed != 1234 || m.steps != 4 ||
-      m.baseModelRepository != "black-forest-labs/FLUX.2-klein-4B" || m.companionRepository != "google-ai-edge/litert-samples" ||
-      m.immutableBaseModelRevision != BASE_REVISION || m.immutableCompanionRevision != COMPANION_REVISION ||
-      m.originalGeneratorScriptSha256 != GENERATOR_SHA || m.generatorScriptPath != "compiled_model_api/text_to_image/flux2_klein_kotlin_gpu/conversion/gen_prep_klein.py" ||
+    val generated = try { OffsetDateTime.parse(m.generatedAt) } catch (_: Exception) { fail("generatedAt is not a valid timestamp.") }
+    if (generated.offset != ZoneOffset.UTC) fail("generatedAt must be a UTC timestamp.")
+    if (m.schemaVersion != 1 || m.purpose != "FLUX Phase 2G editing host inputs" || m.mode != "image-editing" ||
+      m.seed != 1234 || m.steps != 4 || m.imageSize != listOf(256, 256) ||
+      m.baseModelRepository != "black-forest-labs/FLUX.2-klein-4B" || m.immutableBaseModelRevision != BASE_REVISION ||
+      m.companionRepository != "google-ai-edge/litert-samples" || m.immutableCompanionRevision != COMPANION_REVISION ||
+      m.generatorScriptPath != "compiled_model_api/text_to_image/flux2_klein_kotlin_gpu/conversion/gen_prep_klein.py" ||
+      m.originalGeneratorScriptSha256 != GENERATOR_SHA ||
       m.authenticationPatchedScriptSha256 != "4f9dbc4c48998da80489978752e275a99b453f4cce5a0e29174431c490fb7a94" ||
-      m.generatedAt != "2026-07-30T06:16:43.736255+00:00" || m.pythonVersion != "3.12.13" || m.pytorchVersion != "2.9.0+cpu" ||
       m.extractionLibraries != Libraries("1.14.0", "0.39.0", "1.25.1", "2.0.2", "0.8.0", "5.14.1") ||
       m.provenanceStatement != "The five files were generated by the recorded pinned companion algorithm from the recorded immutable base-model revision. The local script modification supplied only HF_TOKEN and the immutable revision to from_pretrained." ||
-      m.purpose != "FLUX Phase 2G editing host inputs" || m.imageSize != listOf(256, 256) || m.artifacts.keys != contracts.keys) fail("Metadata provenance does not match Phase 2G.")
+      m.pythonVersion != "3.12.13" || m.pytorchVersion != "2.9.0+cpu" || m.artifacts.keys != contracts.keys) {
+      fail("Metadata provenance does not match the authoritative Phase 2G contract.")
+    }
     contracts.forEach { (name, c) ->
       val a = m.artifacts[name]
-      if (a == null || a.shape != c.shape || a.elementCount != c.count || a.byteCount != c.bytes || a.sha256 != c.sha ||
-        a.dtype != "float32" || a.numpyDtype != "<f4" || a.byteOrder != "little-endian") fail("$name metadata contract is invalid.")
+      if (a == null || a.shape != c.shape || a.elementCount != c.count || a.byteCount != c.bytes ||
+        a.sha256 != c.sha || a.dtype != "float32" || a.numpyDtype != "<f4" || a.byteOrder != "little-endian") {
+        fail("$name metadata contract is invalid.")
+      }
     }
   }
+
+  private fun readBounded(input: InputStream, maximum: Int, check: () -> Unit): ByteArray = input.use {
+    val output = java.io.ByteArrayOutputStream()
+    val buffer = ByteArray(4096)
+    var total = 0
+    while (true) {
+      check()
+      val read = it.read(buffer)
+      if (read < 0) break
+      total += read
+      if (total > maximum) fail("Phase 2G metadata is too large.")
+      output.write(buffer, 0, read)
+    }
+    output.toByteArray()
+  }
+  private fun ByteArray.toHex() = joinToString("") { "%02x".format(it) }
   private fun fail(message: String): Nothing = throw FluxPhase2gEvidenceException(message)
   private data class Contract(val shape: List<Int>, val count: Int, val bytes: Int, val sha: String)
   @Serializable private data class Artifact(val byteCount: Int, val byteOrder: String, val dtype: String, val elementCount: Int, val numpyDtype: String, val sha256: String, val shape: List<Int>)
@@ -86,11 +162,18 @@ object FluxPhase2gEvidenceParser {
     val originalGeneratorScriptSha256: String, val provenanceStatement: String, val purpose: String,
     val pythonVersion: String, val pytorchVersion: String, val schemaVersion: Int, val seed: Int, val steps: Int,
   )
+  private const val MAX_METADATA_BYTES = 64 * 1024
 }
 
-class FluxPhase2gEvidenceLoader(private val assets: AssetManager) {
+/** Successful-result-only, thread-safe cache around an app-owned evidence source. */
+class FluxPhase2gEvidenceSourceLoader(private val open: (String) -> InputStream) {
   @Volatile private var cached: FluxPhase2gEvidence? = null
-  fun load(): FluxPhase2gEvidence = cached ?: synchronized(this) {
-    cached ?: FluxPhase2gEvidenceParser.parse { assets.open("${FluxPhase2gEvidenceParser.DIRECTORY}/$it") }.also { cached = it }
+  fun load(cancellationCheck: () -> Unit = {}): FluxPhase2gEvidence = cached ?: synchronized(this) {
+    cached ?: FluxPhase2gEvidenceParser.parse(open, cancellationCheck).also { cached = it }
   }
+}
+
+class FluxPhase2gEvidenceLoader(assets: AssetManager) {
+  private val source = FluxPhase2gEvidenceSourceLoader { assets.open("${FluxPhase2gEvidenceParser.DIRECTORY}/$it") }
+  fun load(cancellationCheck: () -> Unit = {}): FluxPhase2gEvidence = source.load(cancellationCheck)
 }
