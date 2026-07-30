@@ -95,7 +95,9 @@ class FluxTransformerDenoiser(
       val tokens = FloatArray(65_536)
       latents.copyInto(tokens)
       referenceValues.copyInto(tokens, 32_768)
-      var outputs = execute(step, "kce_prep.tflite", graphs, listOf(tokens, prompt.values.copyOf(), timestep), completedGraphs, onProgress, graphTimings)
+      // Conditioning is immutable for the lifetime of this verification job and the runner only
+      // reads inputs. Reuse it across steps rather than allocating a ~15 MiB duplicate per step.
+      var outputs = execute(step, "kce_prep.tflite", graphs, listOf(tokens, prompt.values, timestep), completedGraphs, onProgress, graphTimings)
       completedGraphs++
       var image = outputs[0]
       var text = outputs[1]
