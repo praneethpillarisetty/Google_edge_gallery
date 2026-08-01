@@ -19,7 +19,7 @@ class FluxPhase2eBoundaryTest {
     assertContains(ui, "Developer verification — Reference VAE and tokens only")
   }
 
-  @Test fun releaseSourceHasNoVerificationEntryPointAndGenerateIsDisabled() {
+  @Test fun releaseSourceHasNoVerificationEntryPointAndGenerateIsProductionEnabled() {
     val mainRoot = projectRoot().resolve("app/src/main")
     val mainKotlin = Files.walk(mainRoot).use { paths ->
       paths.filter { Files.isRegularFile(it) && it.toString().endsWith(".kt") }
@@ -27,7 +27,7 @@ class FluxPhase2eBoundaryTest {
     }
     assertFalse(mainKotlin.contains("Developer verification — Reference VAE and tokens only"))
     val editor = source("app/src/main/java/com/google/ai/edge/gallery/customtasks/flux/FluxEditorScreen.kt")
-    assertTrue(Regex("Button\\(onClick = \\{\\}, enabled = false").containsMatchIn(editor))
+    assertContains(editor, "viewModel.generate(imageUri, prompt)")
   }
 
   @Test fun phase2eDoesNotNameOrInvokeDeferredGraphs() {

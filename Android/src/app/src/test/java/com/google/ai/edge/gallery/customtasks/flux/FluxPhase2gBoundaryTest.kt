@@ -26,7 +26,7 @@ class FluxPhase2gBoundaryTest {
     assertFalse(state.contains("FloatArray")); assertFalse(result.contains("FloatArray"))
   }
 
-  @Test fun `decoder composes phase 2g without fallbacks and Generate remains disabled`() {
+  @Test fun `decoder composes phase 2g without fallbacks and Generate is production-enabled`() {
     val denoiser = source("src/main/java/com/google/ai/edge/gallery/customtasks/flux/transformer/FluxTransformerDenoiser.kt")
     val controller = source("src/debug/java/com/google/ai/edge/gallery/customtasks/flux/FluxTransformerDenoisingVerification.kt")
     val editor = source("src/main/java/com/google/ai/edge/gallery/customtasks/flux/FluxEditorScreen.kt")
@@ -34,6 +34,6 @@ class FluxPhase2gBoundaryTest {
     assertTrue(phase.contains("kv_vae.tflite"))
     assertFalse(phase.contains("Accelerator.CPU")); assertFalse(phase.contains("FP16"))
     assertFalse(phase.contains("cloud", ignoreCase = true)); assertFalse(phase.contains("Accelerator.NPU"))
-    assertTrue(editor.contains("Button(onClick = {}, enabled = false"))
+    assertTrue(editor.contains("viewModel.generate(imageUri, prompt)"))
   }
 }

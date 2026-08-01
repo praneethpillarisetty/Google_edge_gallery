@@ -5,4 +5,4 @@ import android.net.Uri
 import androidx.compose.runtime.Composable
 
 /** Release source-set deliberately renders no entry point or navigation action. */
-@Composable internal fun FluxDeveloperVerificationSection(modelReady: Boolean, referenceUri: Uri?) = Unit
+@Composable internal fun FluxDeveloperVerificationSection(modelReady: Boolean, referenceUri: Uri?, editorPrompt: String) = Unit

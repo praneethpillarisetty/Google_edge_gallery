@@ -486,7 +486,19 @@ loops at bounded intervals, compilation, execution, output reading, bitmap conve
 Tensor buffers close before the compiled model; the environment lease and staged source are released
 by existing `finally`/`use` ownership boundaries. Intermediate arrays and decoder output are not kept
 in UI state; only sanitized scalar diagnostics and the final debug Bitmap remain. This debug-only
-verification is expected to require substantial memory and runtime. **Generate remains
-unconditionally disabled.** Physical Pixel 10 Pro XL verification remains required, and this phase
+verification is expected to require substantial memory and runtime. Phase 2I supersedes its former
+Generate-disabled boundary with the production flow below. Physical Pixel 10 Pro XL verification remains required, and this phase
 makes no pre-device claim of GPU success, decoded-image correctness, image quality, parity, or
 production readiness.
+
+## Phase 2I — production image editing
+
+Phase 2I connects the release editor's **Generate** action to the verified image-edit pipeline. The editor prompt is now the single authoritative end-to-end prompt: it is passed literally to `FluxPromptConditioner`, which remains the sole owner of the Qwen chat template. The earlier developer-only default prompt could accidentally drive complete verification instead of the editor prompt; complete debug verification now consumes the editor prompt, while isolated text-encoder controls remain clearly separate.
+
+A reference is required because the installed `kce_*` artifacts are image-edit graphs. Without one, Generate is disabled and the editor explains that text-to-image requires an additional model package. No placeholder reference or text-to-image path is invented; separately verified `kc_*` artifacts are deferred to a later phase.
+
+The fixed graph contract is: app-owned source staging → 256×256 preprocessing → `kv_vae_enc.tflite` → reference tokens → prompt conditioning → four serialized `kce_*` denoising steps → decoder-tail preparation → `kv_vae.tflite` → planar RGB conversion → an opaque 256×256 ARGB_8888 bitmap. One LiteRT 2.1.0 environment is shared for a generation and closed deterministically. Execution remains GPU FP32 only, with no CPU, FP16, cloud, Play Services, NPU, or Tensor TPU fallback. Cancellation stops subsequent work, closes graph/environment resources, deletes the staged source, and preserves the last successful image. ViewModel ownership prevents configuration recreation from launching a duplicate job; leaving its navigation owner cancels active work.
+
+The generated result opens into a fullscreen pinch-zoom/pan viewer with Reset and Close. Explicit actions save an original PNG to `Pictures/GoogleEdgeGallery` through pending-row MediaStore semantics and share a content URI with temporary read permission. The optional **1024×1024 resized export** uses deterministic filtered Android bitmap scaling off the UI thread and promptly releases its temporary bitmap. It is resizing, **not AI super-resolution**, restored detail, or native 1024 generation; AI super-resolution is deferred to Phase 2J.
+
+Generation is resource intensive. A local physical-device Phase 2H observation on a Google Pixel 10 Pro XL (Android API 37, GPU FP32) completed four steps with finite `[1,256,128]` latents, finite `[1,32,32,32]` decoder input, finite `[1,3,256,256]` decoder output, and an opaque 256×256 ARGB_8888 bitmap. Total time was approximately 270562 ms (decoder tail 62 ms, VAE decoder 4294 ms, bitmap conversion 72 ms); process PSS was approximately 300657 → 751879 kB and thermal status 0 → 0. This is only a local Phase 2H observation: Phase 2I debug and release APKs still require physical Pixel testing, and no image-quality or prompt-adherence claim is established.
