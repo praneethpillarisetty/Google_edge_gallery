@@ -13,7 +13,7 @@ class FluxPhase2gBoundaryTest {
   @Test fun `debug exposes controller while release remains a no op`() {
     val debug = source("src/debug/java/com/google/ai/edge/gallery/customtasks/flux/FluxDeveloperVerificationSection.kt")
     val release = source("src/release/java/com/google/ai/edge/gallery/customtasks/flux/FluxDeveloperVerificationSection.kt")
-    assertTrue(debug.contains("Developer verification — Transformer denoising only"))
+    assertTrue(debug.contains("Developer verification — VAE decoder and image"))
     assertTrue(debug.contains("FluxTransformerDenoisingVerificationViewModel"))
     assertFalse(release.contains("Transformer denoising"))
     assertTrue(release.contains("= Unit"))
@@ -26,14 +26,14 @@ class FluxPhase2gBoundaryTest {
     assertFalse(state.contains("FloatArray")); assertFalse(result.contains("FloatArray"))
   }
 
-  @Test fun `decoder and fallbacks remain outside phase 2g and Generate remains disabled`() {
+  @Test fun `decoder composes phase 2g without fallbacks and Generate remains disabled`() {
     val denoiser = source("src/main/java/com/google/ai/edge/gallery/customtasks/flux/transformer/FluxTransformerDenoiser.kt")
     val controller = source("src/debug/java/com/google/ai/edge/gallery/customtasks/flux/FluxTransformerDenoisingVerification.kt")
     val editor = source("src/main/java/com/google/ai/edge/gallery/customtasks/flux/FluxEditorScreen.kt")
     val phase = denoiser + controller
-    assertFalse(phase.contains("kv_vae.tflite"))
+    assertTrue(phase.contains("kv_vae.tflite"))
     assertFalse(phase.contains("Accelerator.CPU")); assertFalse(phase.contains("FP16"))
-    assertFalse(phase.contains("cloud", ignoreCase = true)); assertFalse(phase.contains("NPU"))
+    assertFalse(phase.contains("cloud", ignoreCase = true)); assertFalse(phase.contains("Accelerator.NPU"))
     assertTrue(editor.contains("Button(onClick = {}, enabled = false"))
   }
 }

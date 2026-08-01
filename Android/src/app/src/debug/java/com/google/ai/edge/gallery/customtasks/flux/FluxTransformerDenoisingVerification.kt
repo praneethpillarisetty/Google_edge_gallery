@@ -2,6 +2,7 @@
 package com.google.ai.edge.gallery.customtasks.flux
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Debug
@@ -9,6 +10,11 @@ import android.os.PowerManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.ai.edge.gallery.customtasks.flux.image.FluxReferenceConstantsLoader
+import com.google.ai.edge.gallery.customtasks.flux.decoder.FluxDecodedBitmapConverter
+import com.google.ai.edge.gallery.customtasks.flux.decoder.FluxDecoderTail
+import com.google.ai.edge.gallery.customtasks.flux.decoder.FluxPhase2hEvidenceLoader
+import com.google.ai.edge.gallery.customtasks.flux.decoder.FluxPhase2hEvidenceParser
+import com.google.ai.edge.gallery.customtasks.flux.decoder.FluxVaeDecoder
 import com.google.ai.edge.gallery.customtasks.flux.image.FluxReferenceImagePreprocessor
 import com.google.ai.edge.gallery.customtasks.flux.image.FluxReferenceImageSourceStager
 import com.google.ai.edge.gallery.customtasks.flux.image.FluxReferenceTokenEncoder
@@ -35,10 +41,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 enum class FluxTransformerVerificationStage {
-  IDLE, VALIDATING_FILES, PREPROCESSING_REFERENCE, RUNNING_REFERENCE_VAE,
+  IDLE, VALIDATING_FILES, STAGING_REFERENCE, PREPROCESSING_REFERENCE, RUNNING_REFERENCE_VAE,
   PREPARING_REFERENCE_TOKENS, RUNNING_TEXT_ENCODER, ASSEMBLING_EDIT_SEQUENCE,
   RUNNING_PREP_GRAPH, DENOISING_STEP_1, DENOISING_STEP_2, DENOISING_STEP_3,
-  DENOISING_STEP_4, VALIDATING_FINAL_LATENTS, COMPLETE, CANCELLED, ERROR,
+  DENOISING_STEP_4, VALIDATING_FINAL_LATENTS, VALIDATING_DECODER_EVIDENCE,
+  PREPARING_DECODER_INPUT, RUNNING_VAE_DECODER, CONVERTING_BITMAP, COMPLETE, CANCELLED, ERROR,
 }
 
 data class FluxTransformerVerificationState(
@@ -51,6 +58,7 @@ data class FluxTransformerVerificationState(
   val cancellationAvailable: Boolean = false,
   val summary: String = "",
   val error: String? = null,
+  val bitmap: Bitmap? = null,
 )
 
 data class FluxTransformerVerificationResult(
@@ -79,6 +87,10 @@ data class FluxTransformerVerificationResult(
   val device: String,
   val androidApi: Int,
   val cancellationAvailable: Boolean,
+  val decoderHash: String = "not observed",
+  val decoderTailMillis: Long = 0,
+  val decoderMillis: Long = 0,
+  val bitmapMillis: Long = 0,
 ) {
   fun sanitizedSummary(): String = """backend: $backend
     |graph sequence: ${graphSequence.joinToString(" -> ")}
@@ -99,7 +111,16 @@ data class FluxTransformerVerificationResult(
     |thermal: $thermalBefore -> $thermalAfter
     |device: $device; Android API $androidApi
     |cancellation available: $cancellationAvailable
-    |VAE decoding: deferred
+    |decoder graph: kv_vae.tflite
+    |kv_vae.tflite local SHA-256 (not publisher-verified): $decoderHash
+    |Phase 2H evidence: unpack=${FluxPhase2hEvidenceParser.UNPACK_SHA256}, unpatch=${FluxPhase2hEvidenceParser.UNPATCH_SHA256}
+    |unpacked: [1, 128, 16, 16]; 32768 elements; finite=true
+    |decoder input: [1, 32, 32, 32]; 32768 elements; finite=true
+    |decoder output: [1, 3, 256, 256]; 196608 elements; finite=true
+    |bitmap: 256 x 256 ARGB_8888; opaque alpha=true
+    |decoder-tail preparation: $decoderTailMillis ms
+    |VAE decoder compile/run: $decoderMillis ms
+    |bitmap conversion: $bitmapMillis ms
     |Generate: disabled""".trimMargin()
 }
 
@@ -112,6 +133,7 @@ class FluxTransformerDenoisingVerificationViewModel @Inject constructor(
   val state = mutableState.asStateFlow()
   private val evidenceLoader by lazy { FluxPhase2gEvidenceLoader(context.assets) }
   private val referenceConstants by lazy { FluxReferenceConstantsLoader(context.assets) }
+  private val phase2hEvidence by lazy { FluxPhase2hEvidenceLoader(context.assets) }
   private var job: Job? = null
 
   fun run(uri: Uri, prompt: String, modelReadyHint: Boolean) {
@@ -128,8 +150,12 @@ class FluxTransformerDenoisingVerificationViewModel @Inject constructor(
         require(repository.events.first() is FluxDownloadEvent.Ready) { "Model repository is not Ready." }
         val result = repository.withModelFilesLocked { root, manifest, metadata ->
           coroutineContext.ensureActive()
+          update(FluxTransformerVerificationStage.VALIDATING_DECODER_EVIDENCE, started)
+          val decoderEvidence = phase2hEvidence.load()
+          coroutineContext.ensureActive()
           val evidence = evidenceLoader.load { coroutineContext.ensureActive() }
           FluxTransformerDenoisingContracts.GRAPH_ORDER.forEach { name -> verifyModel(root, name, manifest, metadata) }
+          update(FluxTransformerVerificationStage.STAGING_REFERENCE, started)
           FluxReferenceImageSourceStager(context.cacheDir, context.contentResolver, uri).withStagedSource { staged ->
             update(FluxTransformerVerificationStage.PREPROCESSING_REFERENCE, started)
             coroutineContext.ensureActive()
@@ -166,7 +192,23 @@ class FluxTransformerDenoisingVerificationViewModel @Inject constructor(
               }
               update(FluxTransformerVerificationStage.VALIDATING_FINAL_LATENTS, started, 4, "none", 32)
               coroutineContext.ensureActive()
-              buildResult(core, preprocessing, vaeMillis, referenceMillis, textMillis, started, heapBefore, pssBefore, thermalBefore)
+              update(FluxTransformerVerificationStage.PREPARING_DECODER_INPUT, started, 4, "none", 32)
+              val tailStart = System.nanoTime()
+              val decoderInput = FluxDecoderTail(decoderEvidence, referenceConstants.load()).prepare(core.copyFinalLatents()) { coroutineContext.ensureActive() }.first
+              val tailMillis = elapsed(tailStart)
+              update(FluxTransformerVerificationStage.RUNNING_VAE_DECODER, started, 4, FluxVaeDecoder.GRAPH, 32)
+              verifyModel(root, FluxVaeDecoder.GRAPH, manifest, metadata)
+              val decoderFile = java.io.File(root.canonicalFile, FluxVaeDecoder.GRAPH).canonicalFile
+              val decoderHash = DefaultFluxDownloadRepository.sha256(decoderFile)
+              val decoderStart = System.nanoTime()
+              val decoded = FluxVaeDecoder(runner).decode(root, manifest, decoderInput)
+              val decoderMillis = elapsed(decoderStart)
+              update(FluxTransformerVerificationStage.CONVERTING_BITMAP, started, 4, FluxVaeDecoder.GRAPH, 32)
+              val bitmapStart = System.nanoTime()
+              val bitmap = FluxDecodedBitmapConverter.bitmap(decoded) { coroutineContext.ensureActive() }
+              val bitmapMillis = elapsed(bitmapStart)
+              PipelineResult(buildResult(core, preprocessing, vaeMillis, referenceMillis, textMillis, started, heapBefore, pssBefore, thermalBefore,
+                decoderHash, tailMillis, decoderMillis, bitmapMillis), bitmap)
             } finally {
               environment.close()
             }
@@ -178,7 +220,7 @@ class FluxTransformerDenoisingVerificationViewModel @Inject constructor(
           currentStep = 4,
           completedGraphs = 32,
           elapsedMillis = elapsed(started),
-          summary = result.sanitizedSummary(),
+          summary = result.diagnostic.sanitizedSummary(), bitmap = result.bitmap,
         )
       } catch (_: CancellationException) {
         mutableState.value = FluxTransformerVerificationState(stage = FluxTransformerVerificationStage.CANCELLED, elapsedMillis = elapsed(started), error = "Transformer verification cancelled.")
@@ -216,16 +258,25 @@ class FluxTransformerDenoisingVerificationViewModel @Inject constructor(
     3 -> FluxTransformerVerificationStage.DENOISING_STEP_3
     else -> FluxTransformerVerificationStage.DENOISING_STEP_4
   }
-  private fun buildResult(core: FluxTransformerCoreResult, preprocessing: Long, vae: Long, reference: Long, text: Long, started: Long, heapBefore: Long, pssBefore: Long, thermalBefore: Int) =
+  private data class PipelineResult(val diagnostic: FluxTransformerVerificationResult, val bitmap: Bitmap)
+  private fun buildResult(core: FluxTransformerCoreResult, preprocessing: Long, vae: Long, reference: Long, text: Long, started: Long, heapBefore: Long, pssBefore: Long, thermalBefore: Int,
+    decoderHash: String, tailMillis: Long, decoderMillis: Long, bitmapMillis: Long) =
     FluxTransformerVerificationResult(
-      core.backend, core.graphSequence, core.completedSteps, core.initialShape, core.initialElements,
+      core.backend, listOf("kv_vae_enc.tflite", "ke_enc0.tflite", "ke_enc1.tflite", "ke_enc2.tflite") +
+        List(4) { core.graphSequence }.flatten() + FluxVaeDecoder.GRAPH,
+      core.completedSteps, core.initialShape, core.initialElements,
       core.finalShape, core.finalElements, core.allFinite, FluxPhase2gEvidenceParser.expectedHashes(),
       preprocessing, vae, reference, text, core.stepDurationsMillis,
       core.graphTimings.map { "step ${it.step} ${it.graph}: ${it.durationMillis} ms" }, elapsed(started),
       heapBefore, heap(), pssBefore, Debug.getPss(), thermalBefore, thermal(),
       "${Build.MANUFACTURER} ${Build.MODEL}", Build.VERSION.SDK_INT, true,
+      decoderHash, tailMillis, decoderMillis, bitmapMillis,
     )
   private fun sanitize(failure: Exception): String = when {
+    failure is com.google.ai.edge.gallery.customtasks.flux.decoder.FluxPhase2hEvidenceException -> "Invalid or missing Phase 2H evidence."
+    failure.message?.contains("decoder output", true) == true -> "The VAE decoder produced a non-finite or invalid output."
+    failure.message?.contains("decoder input", true) == true -> "Decoder-tail preparation failed."
+    failure.message?.contains("decoder graph", true) == true -> "The VAE decoder graph is missing."
     failure.message?.contains("evidence", true) == true -> "Phase 2G evidence validation failed."
     failure.message?.contains("model", true) == true -> "A required model file is missing or changed."
     failure.message?.contains("image", true) == true -> "The selected source image could not be read or is unsupported."

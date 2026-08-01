@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -21,6 +22,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -73,10 +75,10 @@ private fun FluxTransformerDenoisingVerificationSection(
   val state by viewModel.state.collectAsState()
   val context = LocalContext.current
   Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-    Text("Developer verification — Transformer denoising only")
-    Text("Runs four GPU FP32 steps without VAE decoding or an output image.")
+    Text("Developer verification — VAE decoder and image")
+    Text("Runs the complete four-step GPU FP32 verification and displays the decoded image.")
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-      Button(onClick = { referenceUri?.let { viewModel.run(it, prompt, modelReady) } }, enabled = modelReady && referenceUri != null && prompt.isNotBlank() && !state.running) { Text("Run Transformer Denoising") }
+      Button(onClick = { referenceUri?.let { viewModel.run(it, prompt, modelReady) } }, enabled = modelReady && referenceUri != null && prompt.isNotBlank() && !state.running) { Text("Verify VAE Decoder and Image") }
       OutlinedButton(onClick = viewModel::cancel, enabled = state.running) { Text("Cancel") }
     }
     Text("Current stage: ${state.stage}")
@@ -87,6 +89,7 @@ private fun FluxTransformerDenoisingVerificationSection(
     Text("Cancellation available: ${state.cancellationAvailable}")
     if (state.running) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
     state.error?.let { Text(it) }
+    state.bitmap?.let { Image(it.asImageBitmap(), "Decoded FLUX verification image", modifier = Modifier.fillMaxWidth()) }
     if (state.summary.isNotEmpty()) {
       OutlinedTextField(state.summary, {}, readOnly = true, label = { Text("Sanitized denoising diagnostic") }, modifier = Modifier.fillMaxWidth())
       OutlinedButton(onClick = { context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("FLUX denoising diagnostic", state.summary)) }) { Text("Copy diagnostic summary") }
