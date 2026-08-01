@@ -31,17 +31,18 @@ import androidx.hilt.navigation.compose.hiltViewModel
 internal fun FluxDeveloperVerificationSection(
   modelReady: Boolean,
   referenceUri: Uri?,
+  editorPrompt: String,
   viewModel: FluxVerificationViewModel = hiltViewModel(),
 ) {
   val state by viewModel.state.collectAsState()
-  var prompt by remember { mutableStateOf("A red ceramic cup on a table") }
+  var isolatedPrompt by remember { mutableStateOf("") }
   val context = LocalContext.current
   Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
     Text("Developer verification — Text encoder only")
     Text("Warning: GPU FP32 verification may take several minutes and heat the device. Stop if the device becomes uncomfortable to hold.")
-    OutlinedTextField(value = prompt, onValueChange = { prompt = it }, label = { Text("Non-sensitive test prompt") }, enabled = !state.running, modifier = Modifier.fillMaxWidth())
+    OutlinedTextField(value = isolatedPrompt, onValueChange = { isolatedPrompt = it }, label = { Text("Isolated text-encoder test prompt") }, enabled = !state.running, modifier = Modifier.fillMaxWidth())
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-      Button(onClick = { viewModel.run(prompt, modelReady) }, enabled = modelReady && !state.running) { Text("Run Text Encoder") }
+      Button(onClick = { viewModel.run(isolatedPrompt, modelReady) }, enabled = modelReady && isolatedPrompt.isNotBlank() && !state.running) { Text("Run Text Encoder") }
       OutlinedButton(onClick = viewModel::cancel, enabled = state.running) { Text("Cancel") }
     }
     Text("Current stage: ${state.stage}")
@@ -60,8 +61,8 @@ internal fun FluxDeveloperVerificationSection(
       }) { Text("Copy diagnostic summary") }
     }
     FluxReferenceVaeVerificationSection(modelReady, referenceUri)
-    FluxTransformerPrepVerificationSection(modelReady, referenceUri, prompt)
-    FluxTransformerDenoisingVerificationSection(modelReady, referenceUri, prompt)
+    FluxTransformerPrepVerificationSection(modelReady, referenceUri, editorPrompt)
+    FluxTransformerDenoisingVerificationSection(modelReady, referenceUri, editorPrompt)
   }
 }
 

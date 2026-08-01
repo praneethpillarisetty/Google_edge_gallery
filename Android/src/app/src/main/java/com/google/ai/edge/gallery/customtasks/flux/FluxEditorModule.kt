@@ -9,11 +9,14 @@ import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
 import javax.inject.Singleton
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxImageEditGenerator
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxImageEditPipeline
 
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class FluxEditorBindings {
   @Binds @Singleton abstract fun bindRepository(repository: DefaultFluxDownloadRepository): FluxDownloadRepository
+  @Binds @Singleton abstract fun bindImageEditGenerator(pipeline: FluxImageEditPipeline): FluxImageEditGenerator
 }
 
 @Module
