@@ -37,7 +37,8 @@ object FluxTransformerDenoisingContracts {
 }
 
 data class FluxGraphTiming(val step: Int, val graph: String, val durationMillis: Long)
-data class FluxTransformerCoreResult(
+class FluxTransformerCoreResult private constructor(
+  finalLatents: FloatArray,
   val backend: String = "GPU FP32",
   val graphSequence: List<String>,
   val completedSteps: Int,
@@ -48,7 +49,26 @@ data class FluxTransformerCoreResult(
   val allFinite: Boolean,
   val stepDurationsMillis: List<Long>,
   val graphTimings: List<FluxGraphTiming>,
-)
+) {
+  private val ownedFinalLatents = finalLatents.copyOf()
+  init {
+    require(finalShape == listOf(1, 256, 128) && finalElements == 32_768 &&
+      ownedFinalLatents.size == finalElements && ownedFinalLatents.all(Float::isFinite)) {
+      "Final transformer latents must be finite FP32 [1,256,128]."
+    }
+  }
+  fun copyFinalLatents(): FloatArray = ownedFinalLatents.copyOf()
+
+  companion object {
+    internal fun checked(
+      finalLatents: FloatArray,
+      graphSequence: List<String>, completedSteps: Int, allFinite: Boolean,
+      stepDurationsMillis: List<Long>, graphTimings: List<FluxGraphTiming>,
+    ) = FluxTransformerCoreResult(finalLatents, graphSequence = graphSequence,
+      completedSteps = completedSteps, allFinite = allFinite,
+      stepDurationsMillis = stepDurationsMillis, graphTimings = graphTimings)
+  }
+}
 class FluxTransformerDenoisingException(message: String) : IllegalStateException(message)
 
 data class FluxDenoisingProgress(val step: Int, val graph: String, val completedGraphs: Int)
@@ -129,7 +149,8 @@ class FluxTransformerDenoiser(
       stepTimings += millisSince(stepStart)
     }
     coroutineContext.ensureActive()
-    FluxTransformerCoreResult(
+    FluxTransformerCoreResult.checked(
+      finalLatents = latents.copyOf(),
       graphSequence = FluxTransformerDenoisingContracts.GRAPH_ORDER,
       completedSteps = FluxTransformerDenoisingContracts.STEPS,
       allFinite = latents.all(Float::isFinite),

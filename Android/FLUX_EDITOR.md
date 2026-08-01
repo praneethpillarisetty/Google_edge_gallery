@@ -442,3 +442,51 @@ JVM tests prove host contracts and failure cleanup only; they do **not** claim p
 correctness, numerical quality, acceptable memory use, or thermal safety. `kv_vae.tflite` output
 VAE decoding is deferred, no output bitmap or placeholder is produced, and **Generate remains
 disabled**.
+
+## Phase 2H — authoritative decoder-tail and debug image verification
+
+Phase 2H consumes the owned, finite final Phase 2G FP32 noise latents `[1,256,128]`. The typed
+Phase 2G result privately owns a defensive copy and exposes only `copyFinalLatents()`; reference
+values and graph intermediates are not exposed. The decoder tail applies the committed unpack
+gather, interprets `[1,128,16,16]` in row-major NCHW order, computes
+`value * bn_std[channel] + bn_mean[channel]` across each 16×16 plane, applies the committed unpatch
+gather, and interprets the result as FP32 `[1,32,32,32]`.
+
+Provenance is immutable: base `black-forest-labs/FLUX.2-klein-4B` revision
+`e7b7dc27f91deacad38e78976d1f2b499d76a294`; companion `google-ai-edge/litert-samples` revision
+`f48a89e4f29a74ab51f29c311ac7a0e5e479d225`; generator
+`compiled_model_api/text_to_image/flux2_klein_kotlin_gpu/conversion/gen_prep_klein.py` with original
+SHA-256 `1f2b3d902d4f36281e61447d86331e08bd1c61f20f9034896817c086ae1ab61d`.
+`unpack_perm.bin` is 131072 bytes, SHA-256
+`909fbd19ae0075502700869ea294e50f2a5cd55376ace013dd19b31d4b862ce9`; `unpatch_perm.bin` is
+131072 bytes, SHA-256 `3ba8f27ee20eb995c5cc6752d02a2a7dd237213afd7059d9e403ad966b334fa7`.
+The JSON and both signed little-endian int32 complete bijections are strictly validated before a
+successful immutable result is synchronized and cached.
+
+The inverse normalization deliberately reuses Phase 2E `bn_mean.bin` (SHA-256
+`9027fac5727854f779ebbeae3032cfce0d47a11bc85f4329eb0a317c9ad90217`) and `bn_std.bin`
+(SHA-256 `e89b48bf701b864cc6cad73070e0e49052ee673d2c34ec2084ecf6386284d199`). The newly observed
+`7159c619f5ffa89e6f53306cba741645e5755c95db1c8d13097e0c5ee7bb886e` standard-deviation file is
+not used: decoding must reverse the application's existing Phase 2E transformation. No additional
+epsilon, square root, batch-normalization gamma, or beta is applied.
+
+Only `kv_vae.tflite` executes: exactly one finite FP32 `[1,32,32,32]` input (32768 elements) and
+exactly one finite FP32 planar RGB `[1,3,256,256]` output (196608 elements). It uses LiteRT 2.1.0
+`CompiledModel`, GPU, `GpuOptions` FP32, the shared non-null environment, serialized execution, and
+no retained compiled model. There is no CPU, FP16, cloud, Play Services, NPU, or Tensor TPU fallback.
+
+For Android pixels, each finite planar red/green/blue value is clamped to `[-1,1]`, transformed by
+`(value + 1) * 127.5`, converted with Kotlin `Float.toInt()` truncation toward zero, defensively
+clamped to `[0,255]`, and packed into an opaque row-major 256×256 ARGB_8888 bitmap. The pinned
+Python and Android companion conversions conflict because Python rounds. Following Android
+truncation is an explicit Android-target project decision, not a claim that both implementations agree.
+
+Cancellation is checked around evidence loading, large allocations, unpack/normalization/unpatch
+loops at bounded intervals, compilation, execution, output reading, bitmap conversion, and return.
+Tensor buffers close before the compiled model; the environment lease and staged source are released
+by existing `finally`/`use` ownership boundaries. Intermediate arrays and decoder output are not kept
+in UI state; only sanitized scalar diagnostics and the final debug Bitmap remain. This debug-only
+verification is expected to require substantial memory and runtime. **Generate remains
+unconditionally disabled.** Physical Pixel 10 Pro XL verification remains required, and this phase
+makes no pre-device claim of GPU success, decoded-image correctness, image quality, parity, or
+production readiness.

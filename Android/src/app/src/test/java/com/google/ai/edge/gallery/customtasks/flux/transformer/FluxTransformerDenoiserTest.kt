@@ -12,6 +12,7 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
+import kotlin.test.assertContentEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CancellationException
@@ -44,6 +45,22 @@ class FluxTransformerDenoiserTest {
     assertEquals(4, result.stepDurationsMillis.size)
     assertEquals(32, result.graphTimings.size)
     assertTrue(runner.authoritativeWiringObserved)
+    val expectedFinal = fixture.evidence.initialLatents().also { values -> repeat(4) { step ->
+      for (index in values.indices) values[index] += fixture.evidence.dsigma(step)
+    } }
+    assertContentEquals(expectedFinal, result.copyFinalLatents())
+    assertTrue(result.copyFinalLatents().none { it == 5f }, "reference-token marker must not escape")
+  }
+
+  @Test fun `typed final latent handoff validates and defensively owns values`() {
+    val original = FloatArray(32_768) { it.toFloat() }
+    val result = FluxTransformerCoreResult.checked(original, emptyList(), 4, true, emptyList(), emptyList())
+    original[0] = -1f
+    assertEquals(0f, result.copyFinalLatents()[0])
+    val first = result.copyFinalLatents(); first[1] = -1f
+    assertEquals(1f, result.copyFinalLatents()[1])
+    assertFailsWith<IllegalArgumentException> { FluxTransformerCoreResult.checked(FloatArray(1), emptyList(), 4, true, emptyList(), emptyList()) }
+    assertFailsWith<IllegalArgumentException> { FluxTransformerCoreResult.checked(FloatArray(32_768).also { it[0] = Float.NaN }, emptyList(), 4, false, emptyList(), emptyList()) }
   }
 
   @Test fun `wrong output count shape and non finite output stop later graphs`() = runBlocking {
