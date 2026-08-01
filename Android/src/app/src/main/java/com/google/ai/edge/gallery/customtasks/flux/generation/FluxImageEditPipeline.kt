@@ -40,11 +40,12 @@ class FluxImageEditPipeline @Inject constructor(
   override suspend fun generate(reference: Uri, prompt: String, progress: (FluxGenerationProgress) -> Unit): FluxGenerationResult {
     if (prompt.isBlank()) throw FluxGenerationException(FluxGenerationError.PROMPT_MISSING)
     if (repository.events.first() !is FluxDownloadEvent.Ready) throw FluxGenerationException(FluxGenerationError.MODEL_NOT_READY)
+    val generationContext = coroutineContext
     val started = System.nanoTime()
     try {
       progress(FluxGenerationProgress(FluxGenerationStage.VALIDATING))
       return repository.withModelFilesLocked { root, manifest, metadata ->
-        val evidence = FluxPhase2gEvidenceLoader(context.assets).load { coroutineContext.ensureActive() }
+        val evidence = FluxPhase2gEvidenceLoader(context.assets).load { generationContext.ensureActive() }
         val decoderEvidence = FluxPhase2hEvidenceLoader(context.assets).load()
         progress(FluxGenerationProgress(FluxGenerationStage.STAGING_REFERENCE))
         FluxReferenceImageSourceStager(context.cacheDir, context.contentResolver, reference).withStagedSource { staged ->
@@ -70,13 +71,13 @@ class FluxImageEditPipeline @Inject constructor(
             }
             coroutineContext.ensureActive()
             progress(FluxGenerationProgress(FluxGenerationStage.PREPARING_DECODER, 4, completedGraphCount = 32))
-            val decoderInput = FluxDecoderTail(decoderEvidence, constants).prepare(core.copyFinalLatents()) { coroutineContext.ensureActive() }.first
+            val decoderInput = FluxDecoderTail(decoderEvidence, constants).prepare(core.copyFinalLatents()) { generationContext.ensureActive() }.first
             progress(FluxGenerationProgress(FluxGenerationStage.DECODING_VAE, 4, FluxVaeDecoder.GRAPH, 32))
             verify(File(root, FluxVaeDecoder.GRAPH), metadata)
             val decoded = FluxVaeDecoder(runner).decode(root, manifest, decoderInput)
             coroutineContext.ensureActive()
             progress(FluxGenerationProgress(FluxGenerationStage.CREATING_BITMAP, 4, completedGraphCount = 32))
-            val bitmap = FluxDecodedBitmapConverter.bitmap(decoded) { coroutineContext.ensureActive() }
+            val bitmap = FluxDecodedBitmapConverter.bitmap(decoded) { generationContext.ensureActive() }
             coroutineContext.ensureActive()
             FluxGenerationResult(bitmap, (System.nanoTime() - started) / 1_000_000)
           }
