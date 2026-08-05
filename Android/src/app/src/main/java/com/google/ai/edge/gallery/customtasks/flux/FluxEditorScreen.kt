@@ -43,6 +43,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.google.ai.edge.gallery.R
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxSeedSelection
 import kotlinx.coroutines.launch
 
 @Composable
@@ -118,6 +119,21 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
       is FluxEditorUiState.Ready -> Text(stringResource(R.string.flux_model_ready))
     }
     Text(if (imageUri == null) "Select a reference image to edit. Text-to-image requires an additional model package." else "Mode: Image edit")
+    Text("Advanced generation")
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      OutlinedButton(onClick = { viewModel.setSeedMode(FluxSeedSelection.Random) }, enabled = !generation.running) { Text(if (generation.seedSelection is FluxSeedSelection.Random) "Random seed ✓" else "Random seed") }
+      OutlinedButton(onClick = { viewModel.setSeedMode(FluxSeedSelection.Fixed(generation.fixedSeedText.toLongOrNull() ?: 0L)) }, enabled = !generation.running) { Text(if (generation.seedSelection is FluxSeedSelection.Fixed) "Fixed seed ✓" else "Fixed seed") }
+      OutlinedButton(onClick = viewModel::randomizeSeed, enabled = !generation.running) { Text("Randomize seed") }
+    }
+    if (generation.seedSelection is FluxSeedSelection.Fixed) {
+      OutlinedTextField(generation.fixedSeedText, viewModel::setFixedSeedText, Modifier.fillMaxWidth(), label = { Text("Fixed seed (signed 64-bit integer)") }, singleLine = true, enabled = !generation.running)
+    }
+    generation.actualSeed?.let { used ->
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Actual seed used: $used")
+        OutlinedButton(onClick = { context.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText("FLUX seed", used.toString())) }) { Text("Copy seed") }
+      }
+    }
     Button(onClick = { viewModel.generate(imageUri, prompt) }, enabled = viewModel.canGenerate(imageUri, prompt), modifier = Modifier.fillMaxWidth()) {
       Text(stringResource(R.string.flux_generate))
     }

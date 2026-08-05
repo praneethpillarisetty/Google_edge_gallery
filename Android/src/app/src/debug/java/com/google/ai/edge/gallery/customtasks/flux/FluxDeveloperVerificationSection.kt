@@ -60,6 +60,8 @@ internal fun FluxDeveloperVerificationSection(
         context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("FLUX diagnostic", state.summary))
       }) { Text("Copy diagnostic summary") }
     }
+
+    FluxPromptInfluenceComparisonSection(modelReady, referenceUri)
     FluxReferenceVaeVerificationSection(modelReady, referenceUri)
     FluxTransformerPrepVerificationSection(modelReady, referenceUri, editorPrompt)
     FluxTransformerDenoisingVerificationSection(modelReady, referenceUri, editorPrompt)
@@ -95,6 +97,44 @@ private fun FluxTransformerDenoisingVerificationSection(
       OutlinedTextField(state.summary, {}, readOnly = true, label = { Text("Sanitized denoising diagnostic") }, modifier = Modifier.fillMaxWidth())
       OutlinedButton(onClick = { context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("FLUX denoising diagnostic", state.summary)) }) { Text("Copy diagnostic summary") }
     }
+  }
+}
+
+
+@Composable
+private fun FluxPromptInfluenceComparisonSection(
+  modelReady: Boolean,
+  referenceUri: Uri?,
+  viewModel: FluxPromptInfluenceComparisonViewModel = hiltViewModel(),
+) {
+  val state by viewModel.state.collectAsState()
+  val context = LocalContext.current
+  var promptA by remember { mutableStateOf("Preserve the same adult person and facial identity. Replace the outfit with a bright red formal evening gown. Place the person on a sunny tropical beach.") }
+  var promptB by remember { mutableStateOf("Preserve the same adult person and facial identity. Replace the outfit with a black winter coat. Place the person in a snowy mountain landscape at night.") }
+  var seed by remember { mutableStateOf("1234") }
+  Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+    Text("Developer verification — Prompt influence")
+    Text("Runs Prompt A then Prompt B sequentially with the same staged reference and identical fixed-seed initial noise. Summaries omit prompt text and image identifiers.")
+    OutlinedTextField(promptA, { promptA = it }, label = { Text("Prompt A") }, enabled = !state.running, modifier = Modifier.fillMaxWidth(), minLines = 2)
+    OutlinedTextField(promptB, { promptB = it }, label = { Text("Prompt B") }, enabled = !state.running, modifier = Modifier.fillMaxWidth(), minLines = 2)
+    OutlinedTextField(seed, { seed = it }, label = { Text("Fixed seed (signed 64-bit)") }, enabled = !state.running, modifier = Modifier.fillMaxWidth(), singleLine = true)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      Button(onClick = { viewModel.run(referenceUri, promptA, promptB, seed, modelReady) }, enabled = modelReady && referenceUri != null && promptA.isNotBlank() && promptB.isNotBlank() && seed.isNotBlank() && !state.running) { Text("Run comparison") }
+      OutlinedButton(onClick = viewModel::cancel, enabled = state.running) { Text("Cancel") }
+    }
+    Text("Current run: ${state.runLabel}")
+    Text("Current stage: ${state.stage}")
+    Text("Denoising step: ${state.currentStep}/4")
+    Text("Completed graphs: ${state.completedGraphs}/32")
+    Text("Elapsed: ${state.elapsedMillis} ms")
+    if (state.running) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+    state.error?.let { Text(it) }
+    if (state.summary.isNotEmpty()) {
+      OutlinedTextField(state.summary, {}, readOnly = true, label = { Text("Sanitized prompt-influence summary") }, modifier = Modifier.fillMaxWidth())
+      OutlinedButton(onClick = { context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("FLUX prompt influence diagnostic", state.summary)) }) { Text("Copy sanitized diagnostic summary") }
+    }
+    state.bitmapA?.let { Image(it.asImageBitmap(), "Prompt A comparison output thumbnail", modifier = Modifier.fillMaxWidth()) }
+    state.bitmapB?.let { Image(it.asImageBitmap(), "Prompt B comparison output thumbnail", modifier = Modifier.fillMaxWidth()) }
   }
 }
 

@@ -502,3 +502,69 @@ The fixed graph contract is: app-owned source staging → 256×256 preprocessing
 The generated result opens into a fullscreen pinch-zoom/pan viewer with Reset and Close. Explicit actions save an original PNG to `Pictures/GoogleEdgeGallery` through pending-row MediaStore semantics and share a content URI with temporary read permission. The optional **1024×1024 resized export** uses deterministic filtered Android bitmap scaling off the UI thread and promptly releases its temporary bitmap. It is resizing, **not AI super-resolution**, restored detail, or native 1024 generation; AI super-resolution is deferred to Phase 2J.
 
 Generation is resource intensive. A local physical-device Phase 2H observation on a Google Pixel 10 Pro XL (Android API 37, GPU FP32) completed four steps with finite `[1,256,128]` latents, finite `[1,32,32,32]` decoder input, finite `[1,3,256,256]` decoder output, and an opaque 256×256 ARGB_8888 bitmap. Total time was approximately 270562 ms (decoder tail 62 ms, VAE decoder 4294 ms, bitmap conversion 72 ms); process PSS was approximately 300657 → 751879 kB and thermal status 0 → 0. This is only a local Phase 2H observation: Phase 2I debug and release APKs still require physical Pixel testing, and no image-quality or prompt-adherence claim is established.
+
+## Phase 2J — production-noise audit, deterministic seeds, and prompt-influence diagnostics
+
+Base for this checkpoint: `b2063091a13ab6fef58d22c0099e941c0c437a7a`; merge base with `origin/feature/flux-image-editor-phase2`: `b2063091a13ab6fef58d22c0099e941c0c437a7a`.
+
+### Production initial-noise source
+
+Before Phase 2J, ordinary Generate loaded `FluxPhase2gEvidenceLoader` and `FluxTransformerDenoiser` initialized the denoising latents from the validated diagnostic/evidence `latents0.bin` tensor. That meant repeated production generations reused the same evidence latent array, although the synthetic-zero transformer-prep diagnostic remained isolated to debug verification code and did not flow through ordinary Generate.
+
+Phase 2J moves production initial-noise ownership to `FluxProductionNoiseFactory`. Ordinary Generate now asks that factory for `[1,256,128]` / 32,768 finite FP32 initial latents and passes a defensive copy into the unchanged four-step transformer loop. `latents0.bin` remains diagnostic Phase 2G evidence only; it is still used by debug/evidence verification paths where the established evidence contract requires it, but it is no longer the production Generate initial latent source. The synthetic zero-noise and synthetic diagnostic timestep inputs remain debug-only prep verification fixtures and are not production dependencies.
+
+The production seed contract is explicit and typed:
+
+- `FluxSeedSelection.Random` is the default.
+- `FluxSeedSelection.Fixed(Long)` accepts a signed 64-bit integer.
+- malformed fixed-seed text is rejected before generation and is not silently converted to Random.
+- Random mode selects a fresh actual seed for each user-requested generation.
+- the selected seed is recorded in `FluxGenerationResult` metadata and displayed after completion so the output can be reproduced with the same prompt, reference image, installed model state, and fixed seed.
+- prompts, image URIs, paths, provider names, image bytes, and latent arrays are not logged or stored in Compose UI state.
+
+The local production RNG implementation used by Phase 2J is a seed-owned Gaussian FP32 latent generator over exactly 32,768 elements. The seed is a signed Kotlin/Java `Long`; fixed seeds initialize `java.util.Random(seed)` and each latent is `nextGaussian().toFloat()`. Random mode obtains the actual seed from `SecureRandom.nextLong()` and then uses the same deterministic seed-to-latents mapping. This checkpoint does not change latent scaling, timestep embedding, scheduler math, graph inputs/outputs, graph order, or denoising step count.
+
+### UI
+
+The normal editor remains concise and production Generate remains available when the model is Ready, a reference image is selected, a prompt is present, and thermal state is below emergency. An **Advanced generation** section adds Random/Fixed seed mode controls, a fixed signed-64-bit seed input shown only in Fixed mode, a **Randomize seed** control, the actual seed used by the last completed generation, and a copy-seed action.
+
+### Debug-only prompt-influence diagnostic design
+
+The debug-only developer verification area contains a callable **Developer verification — Prompt influence** section in debug builds. Release source keeps a no-op `FluxDeveloperVerificationSection`, so release builds have no Prompt A/B comparison control or action. The comparison procedure implemented for debug APKs is:
+
+1. require model repository state Ready and one selected reference image;
+2. stage the selected reference image once through the existing app-owned staging lifecycle;
+3. hold the existing model-file mutex for the whole A/B comparison;
+4. generate initial Gaussian latents once from the selected signed 64-bit fixed seed;
+5. create two defensive, byte-identical latent copies;
+6. run Prompt A and Prompt B sequentially, never concurrently, with the same staged reference and same initial noise;
+7. close each prompt run's GPU FP32 environment and graph resources before the next run starts;
+8. keep the official four-step transformer graph sequence;
+9. delete staged source files through the existing staging `finally` lifecycle;
+10. retain only sanitized scalar metrics, hashes, durations, and final debug thumbnails/results.
+
+Safe debug default prompts are intentionally adult-person prompts that differ strongly in clothing and background. The diagnostic does not automatically run; a developer must press **Run comparison**. The UI reports current prompt label A/B, pipeline stage, completed denoising step, graph count, elapsed time, cancellation, and a sanitized final diagnostic summary.
+
+### Checkpoints, metrics, and thresholds
+
+Prompt-influence checkpoints are locally observed diagnostics, not publisher-verified model hashes:
+
+1. wrapped prompt token IDs;
+2. final text conditioning `[1,512,7680]`;
+3. final Phase 2G denoised latents `[1,256,128]`;
+4. decoder output `[1,3,256,256]`;
+5. final 256×256 ARGB bitmap.
+
+`kce_prep` hidden-output comparisons are intentionally not claimed in Phase 2J because those hidden outputs are not exposed by an existing authoritative typed diagnostics contract. The comparison does not duplicate graph execution or guess output ordering solely to obtain additional diagnostics.
+
+FP32 summaries record element count, all-finite status, SHA-256 of explicit little-endian IEEE-754 FP32 bytes, minimum, maximum, arithmetic mean, and standard deviation. A/B FP32 comparisons record equal element count and percentage, mean absolute error, maximum absolute error, root mean square error, and cosine similarity when both norms are nonzero. Token IDs use explicit little-endian signed-64-bit encoding for SHA-256 and report differing positions. ARGB bitmaps report dimensions, exact little-endian ARGB pixel SHA-256, differing pixels and percentage, per-channel mean absolute difference, and RGB RMSE.
+
+Diagnostic thresholds are intentionally small numerical propagation checks only: FP32 tensors are marked different when MAE or max absolute error is greater than `1.0e-6`; bitmaps are treated as nearly identical when no more than `0.1%` of pixels differ. These thresholds are not model-quality validation.
+
+Interpretation is deterministic and limited to: `PROMPT_INFLUENCE_OBSERVED`, `PROMPT_DIFFERENCE_LOST_BEFORE_TEXT_CONDITIONING`, `PROMPT_DIFFERENCE_LOST_DURING_TRANSFORMER`, `FINAL_BITMAPS_NEARLY_IDENTICAL`, `COMPARISON_INCONCLUSIVE`, `CANCELLED`, or `ERROR`. Sanitized summaries include backend `GPU FP32`, fixed seed, graph sequence, completion state, checkpoint metrics, Java heap and process PSS before/after, and cancellation availability; the debug UI separately displays total elapsed time. Device/API, thermal status, and per-run durations are not currently captured by this comparison workflow. Summaries exclude prompt text, selected URI, provider, filename, filesystem path, image bytes, tensor values, credentials, Hugging Face token, and model cache path.
+
+A successful prompt-influence comparison proves only that different prompts propagate to numerically different pipeline results under identical reference and noise inputs. It does not prove semantic correctness, identity preservation, image quality, Python parity, publisher parity, or production readiness.
+
+### Non-changes
+
+Phase 2J keeps resolution at 256×256, keeps FLUX denoising at four steps, keeps GPU FP32 mandatory, does not implement TPU/NPU/CPU/cloud fallback, does not add 512×512 generation, does not add super-resolution or face restoration, and does not change model artifacts, tokenizer binaries, evidence binaries, FLUX manifest entries, immutable model revision, graph filenames, graph order, graph contracts, LiteRT precision, guidance scale, negative prompts, edit-strength scaling, or scheduler behavior.

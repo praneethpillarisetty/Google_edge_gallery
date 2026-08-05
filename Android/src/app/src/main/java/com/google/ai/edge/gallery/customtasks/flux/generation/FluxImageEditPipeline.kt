@@ -29,7 +29,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 
 interface FluxImageEditGenerator {
-  suspend fun generate(reference: Uri, prompt: String, progress: (FluxGenerationProgress) -> Unit): FluxGenerationResult
+  suspend fun generate(reference: Uri, prompt: String, seedSelection: FluxSeedSelection = FluxSeedSelection.Random, progress: (FluxGenerationProgress) -> Unit): FluxGenerationResult
 }
 
 /** Production owner for the single, verified GPU-FP32 image-edit graph sequence. */
@@ -37,7 +37,7 @@ class FluxImageEditPipeline @Inject constructor(
   @ApplicationContext private val context: Context,
   private val repository: FluxDownloadRepository,
 ) : FluxImageEditGenerator {
-  override suspend fun generate(reference: Uri, prompt: String, progress: (FluxGenerationProgress) -> Unit): FluxGenerationResult {
+  override suspend fun generate(reference: Uri, prompt: String, seedSelection: FluxSeedSelection, progress: (FluxGenerationProgress) -> Unit): FluxGenerationResult {
     if (prompt.isBlank()) throw FluxGenerationException(FluxGenerationError.PROMPT_MISSING)
     if (repository.events.first() !is FluxDownloadEvent.Ready) throw FluxGenerationException(FluxGenerationError.MODEL_NOT_READY)
     val generationContext = coroutineContext
@@ -46,6 +46,7 @@ class FluxImageEditPipeline @Inject constructor(
       progress(FluxGenerationProgress(FluxGenerationStage.VALIDATING))
       return repository.withModelFilesLocked { root, manifest, metadata ->
         val evidence = FluxPhase2gEvidenceLoader(context.assets).load { generationContext.ensureActive() }
+        val initialLatents = FluxProductionNoiseFactory().create(seedSelection)
         val decoderEvidence = FluxPhase2hEvidenceLoader(context.assets).load()
         progress(FluxGenerationProgress(FluxGenerationStage.STAGING_REFERENCE))
         FluxReferenceImageSourceStager(context.cacheDir, context.contentResolver, reference).withStagedSource { staged ->
@@ -65,7 +66,7 @@ class FluxImageEditPipeline @Inject constructor(
             progress(FluxGenerationProgress(FluxGenerationStage.CONDITIONING_PROMPT))
             // Deliberately pass the literal editor body. FluxPromptConditioner alone owns Qwen wrapping.
             val conditioning = FluxPromptConditioner.create(FluxPromptAssetResolver(root, manifest), runner).condition(prompt)
-            val core = FluxTransformerDenoiser(runner).run(root, manifest, evidence, conditioning, referenceTokens) { p ->
+            val core = FluxTransformerDenoiser(runner).run(root, manifest, evidence, initialLatents.copyValues(), conditioning, referenceTokens) { p ->
               val stage = when (p.step) { 1 -> FluxGenerationStage.TRANSFORMER_STEP_1; 2 -> FluxGenerationStage.TRANSFORMER_STEP_2; 3 -> FluxGenerationStage.TRANSFORMER_STEP_3; else -> FluxGenerationStage.TRANSFORMER_STEP_4 }
               progress(FluxGenerationProgress(stage, p.step, p.graph, p.completedGraphs))
             }
@@ -79,7 +80,7 @@ class FluxImageEditPipeline @Inject constructor(
             progress(FluxGenerationProgress(FluxGenerationStage.CREATING_BITMAP, 4, completedGraphCount = 32))
             val bitmap = FluxDecodedBitmapConverter.bitmap(decoded) { generationContext.ensureActive() }
             coroutineContext.ensureActive()
-            FluxGenerationResult(bitmap, (System.nanoTime() - started) / 1_000_000)
+            FluxGenerationResult(bitmap, (System.nanoTime() - started) / 1_000_000, initialLatents.seed)
           }
         }
       }

@@ -14,6 +14,8 @@ import com.google.ai.edge.gallery.customtasks.flux.generation.FluxGenerationExce
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxGenerationProgress
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxGenerationStage
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxImageEditGenerator
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxSeedParser
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxSeedSelection
 import com.google.ai.edge.gallery.customtasks.flux.output.FluxGeneratedImageStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,6 +35,9 @@ data class FluxProductionGenerationState(
   val sanitizedError: String? = null,
   val finalBitmap: Bitmap? = null,
   val savedOutputUri: Uri? = null,
+  val seedSelection: FluxSeedSelection = FluxSeedSelection.Random,
+  val fixedSeedText: String = "",
+  val actualSeed: Long? = null,
 )
 
 fun fluxGenerateReady(repositoryReady: Boolean, reference: Uri?, prompt: String, running: Boolean, thermalStatus: Int) =
@@ -100,6 +105,10 @@ class FluxEditorViewModel @Inject constructor(
     generationJob?.isActive == true, powerManager.currentThermalStatus,
   )
 
+  fun setSeedMode(selection: FluxSeedSelection) { mutableGenerationState.value = mutableGenerationState.value.copy(seedSelection = selection, sanitizedError = null) }
+  fun setFixedSeedText(text: String) { mutableGenerationState.value = mutableGenerationState.value.copy(fixedSeedText = text, sanitizedError = null) }
+  fun randomizeSeed() { val value = java.security.SecureRandom().nextLong(); mutableGenerationState.value = mutableGenerationState.value.copy(seedSelection = FluxSeedSelection.Fixed(value), fixedSeedText = value.toString(), sanitizedError = null) }
+
   fun generate(reference: Uri?, prompt: String) {
     if (!canGenerate(reference, prompt) || generationJob?.isActive == true) return
     val selected = reference ?: return
@@ -107,7 +116,11 @@ class FluxEditorViewModel @Inject constructor(
       val started = System.nanoTime()
       val previous = mutableGenerationState.value.finalBitmap
       try {
-        val result = generator.generate(selected, prompt) { progress: FluxGenerationProgress ->
+        val seedSelection = when (val current = mutableGenerationState.value.seedSelection) {
+          FluxSeedSelection.Random -> FluxSeedSelection.Random
+          is FluxSeedSelection.Fixed -> FluxSeedParser.parseFixed(mutableGenerationState.value.fixedSeedText)
+        }
+        val result = generator.generate(selected, prompt, seedSelection) { progress: FluxGenerationProgress ->
           mutableGenerationState.value = mutableGenerationState.value.copy(
             running = true, stage = progress.stage, currentStep = progress.currentStep,
             currentGraph = progress.currentGraph, completedGraphCount = progress.completedGraphCount,
@@ -117,13 +130,17 @@ class FluxEditorViewModel @Inject constructor(
         }
         mutableGenerationState.value = FluxProductionGenerationState(
           stage = FluxGenerationStage.COMPLETE, currentStep = 4, completedGraphCount = 32,
-          elapsedMillis = result.elapsedMillis, finalBitmap = result.bitmap,
+          elapsedMillis = result.elapsedMillis, finalBitmap = result.bitmap, actualSeed = result.seed,
+          seedSelection = mutableGenerationState.value.seedSelection, fixedSeedText = mutableGenerationState.value.fixedSeedText,
         )
       } catch (_: CancellationException) {
         mutableGenerationState.value = FluxProductionGenerationState(
           stage = FluxGenerationStage.CANCELLED, elapsedMillis = (System.nanoTime() - started) / 1_000_000,
           sanitizedError = "Generation cancelled.", finalBitmap = previous,
         )
+      } catch (invalid: IllegalArgumentException) {
+        mutableGenerationState.value = mutableGenerationState.value.copy(running = false, stage = FluxGenerationStage.ERROR,
+          elapsedMillis = (System.nanoTime() - started) / 1_000_000, sanitizedError = invalid.message ?: "Invalid fixed seed.", finalBitmap = previous)
       } catch (failure: FluxGenerationException) {
         mutableGenerationState.value = FluxProductionGenerationState(
           stage = FluxGenerationStage.ERROR, elapsedMillis = (System.nanoTime() - started) / 1_000_000,
