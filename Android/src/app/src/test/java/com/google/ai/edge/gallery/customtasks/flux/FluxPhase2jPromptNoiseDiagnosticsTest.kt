@@ -81,9 +81,31 @@ class FluxPhase2jPromptNoiseDiagnosticsTest {
     assertEquals(1, diff.differingPixels); assertTrue(diff.rgbRmse > 0.0)
   }
 
-  @Test fun `interpretation is deterministic`() {
-    val tokens = FluxPromptInfluenceMetrics.compareTokens(longArrayOf(1), longArrayOf(2))
-    val text = FluxPromptInfluenceMetrics.compareFp32(floatArrayOf(1f), floatArrayOf(2f))
-    assertEquals(FluxPromptInfluenceInterpretation.PROMPT_INFLUENCE_OBSERVED, FluxPromptInfluenceMetrics.interpret(tokens, text, null, null))
+
+  @Test fun `debug prompt comparison is sequential sanitized and release has no comparison action`() {
+    val debug = java.io.File("src/debug/java/com/google/ai/edge/gallery/customtasks/flux/FluxPromptInfluenceComparison.kt").readText()
+    assertTrue(debug.contains("runOne(\"A\""))
+    assertTrue(debug.contains("runOne(\"B\""))
+    assertTrue(debug.indexOf("runOne(\"A\"") < debug.indexOf("runOne(\"B\""))
+    assertTrue(debug.contains("contentEquals(noiseB)"))
+    assertTrue(debug.contains("FluxReferenceImageSourceStager"))
+    assertTrue(debug.contains("withModelFilesLocked"))
+    assertTrue(debug.contains("no prompt text, URI, path, image bytes"))
+    val release = java.io.File("src/release/java/com/google/ai/edge/gallery/customtasks/flux/FluxDeveloperVerificationSection.kt").readText()
+    assertFalse(release.contains("Run comparison"))
+    assertFalse(release.contains("Prompt influence"))
+  }
+
+  @Test fun `interpretation branches are deterministic`() {
+    val sameTokens = FluxPromptInfluenceMetrics.compareTokens(longArrayOf(1), longArrayOf(1))
+    val differentTokens = FluxPromptInfluenceMetrics.compareTokens(longArrayOf(1), longArrayOf(2))
+    val sameTensor = FluxPromptInfluenceMetrics.compareFp32(floatArrayOf(1f), floatArrayOf(1f))
+    val differentTensor = FluxPromptInfluenceMetrics.compareFp32(floatArrayOf(1f), floatArrayOf(2f))
+    val sameBitmap = FluxPromptInfluenceMetrics.compareArgb(1, 1, intArrayOf(-1), intArrayOf(-1))
+    assertEquals(FluxPromptInfluenceInterpretation.PROMPT_DIFFERENCE_LOST_BEFORE_TEXT_CONDITIONING, FluxPromptInfluenceMetrics.interpret(sameTokens, differentTensor, differentTensor, null))
+    assertEquals(FluxPromptInfluenceInterpretation.PROMPT_DIFFERENCE_LOST_BEFORE_TEXT_CONDITIONING, FluxPromptInfluenceMetrics.interpret(differentTokens, sameTensor, differentTensor, null))
+    assertEquals(FluxPromptInfluenceInterpretation.PROMPT_DIFFERENCE_LOST_DURING_TRANSFORMER, FluxPromptInfluenceMetrics.interpret(differentTokens, differentTensor, sameTensor, null))
+    assertEquals(FluxPromptInfluenceInterpretation.FINAL_BITMAPS_NEARLY_IDENTICAL, FluxPromptInfluenceMetrics.interpret(differentTokens, differentTensor, differentTensor, sameBitmap))
+    assertEquals(FluxPromptInfluenceInterpretation.PROMPT_INFLUENCE_OBSERVED, FluxPromptInfluenceMetrics.interpret(differentTokens, differentTensor, differentTensor, null))
   }
 }

@@ -530,21 +530,20 @@ The normal editor remains concise and production Generate remains available when
 
 ### Debug-only prompt-influence diagnostic design
 
-The debug-only developer verification area is the only intended home for prompt-influence comparison. Release source keeps a no-op `FluxDeveloperVerificationSection`, so release builds have no prompt-influence navigation entry point from this section. The comparison procedure is:
+The debug-only developer verification area contains a callable **Developer verification — Prompt influence** section in debug builds. Release source keeps a no-op `FluxDeveloperVerificationSection`, so release builds have no Prompt A/B comparison control or action. The comparison procedure implemented for debug APKs is:
 
-1. require model repository state Ready;
-2. stage the selected reference image through the existing app-owned staging lifecycle;
-3. hold the existing model-file mutex for the whole comparison;
-4. generate initial noise once from the selected fixed seed;
-5. run Prompt A with a defensive copy of that exact noise;
-6. release Prompt A graph resources;
-7. run Prompt B sequentially with a second defensive copy of the same noise;
-8. keep GPU FP32 and the official four-step graph sequence;
-9. close TensorBuffers, compiled models, and environments in success, failure, or cancellation paths;
-10. delete staged source files in `finally`;
-11. retain only sanitized scalar metrics, hashes, durations, and developer-requested thumbnails/results.
+1. require model repository state Ready and one selected reference image;
+2. stage the selected reference image once through the existing app-owned staging lifecycle;
+3. hold the existing model-file mutex for the whole A/B comparison;
+4. generate initial Gaussian latents once from the selected signed 64-bit fixed seed;
+5. create two defensive, byte-identical latent copies;
+6. run Prompt A and Prompt B sequentially, never concurrently, with the same staged reference and same initial noise;
+7. close each prompt run's GPU FP32 environment and graph resources before the next run starts;
+8. keep the official four-step transformer graph sequence;
+9. delete staged source files through the existing staging `finally` lifecycle;
+10. retain only sanitized scalar metrics, hashes, durations, and final debug thumbnails/results.
 
-Safe debug default prompts are intentionally adult-person prompts that differ strongly in clothing and background. The diagnostic must not automatically run; a developer must press **Run comparison**. The UI should report current prompt label A/B, pipeline stage, completed denoising step, elapsed time, overall progress, and cancellation.
+Safe debug default prompts are intentionally adult-person prompts that differ strongly in clothing and background. The diagnostic does not automatically run; a developer must press **Run comparison**. The UI reports current prompt label A/B, pipeline stage, completed denoising step, graph count, elapsed time, cancellation, and a sanitized final diagnostic summary.
 
 ### Checkpoints, metrics, and thresholds
 
@@ -552,11 +551,11 @@ Prompt-influence checkpoints are locally observed diagnostics, not publisher-ver
 
 1. wrapped prompt token IDs;
 2. final text conditioning `[1,512,7680]`;
-3. `kce_prep` text-hidden output;
-4. `kce_prep` image-hidden output;
-5. final Phase 2G denoised latents `[1,256,128]`;
-6. decoder output `[1,3,256,256]`;
-7. final 256×256 ARGB bitmap.
+3. final Phase 2G denoised latents `[1,256,128]`;
+4. decoder output `[1,3,256,256]`;
+5. final 256×256 ARGB bitmap.
+
+`kce_prep` hidden-output comparisons are intentionally not claimed in Phase 2J because those hidden outputs are not exposed by an existing authoritative typed diagnostics contract. The comparison does not duplicate graph execution or guess output ordering solely to obtain additional diagnostics.
 
 FP32 summaries record element count, all-finite status, SHA-256 of explicit little-endian IEEE-754 FP32 bytes, minimum, maximum, arithmetic mean, and standard deviation. A/B FP32 comparisons record equal element count and percentage, mean absolute error, maximum absolute error, root mean square error, and cosine similarity when both norms are nonzero. Token IDs use explicit little-endian signed-64-bit encoding for SHA-256 and report differing positions. ARGB bitmaps report dimensions, exact little-endian ARGB pixel SHA-256, differing pixels and percentage, per-channel mean absolute difference, and RGB RMSE.
 
