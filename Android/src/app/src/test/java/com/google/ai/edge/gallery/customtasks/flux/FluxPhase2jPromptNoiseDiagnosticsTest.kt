@@ -7,6 +7,7 @@ import com.google.ai.edge.gallery.customtasks.flux.generation.FluxProductionBoun
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxProductionNoiseFactory
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxSeedParser
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxSeedSelection
+import java.security.MessageDigest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -55,8 +56,13 @@ class FluxPhase2jPromptNoiseDiagnosticsTest {
   }
 
   @Test fun `fp32 hashing is explicit little endian and metrics are deterministic`() {
+    val onePointZeroLittleEndianBytes = byteArrayOf(0x00, 0x00, 0x80.toByte(), 0x3f)
+    val expectedSha = MessageDigest.getInstance("SHA-256")
+      .digest(onePointZeroLittleEndianBytes)
+      .joinToString("") { "%02x".format(it) }
+    assertEquals("e00e5eb9444182f352323374ef4e08ebcb784725fdd4fd612d7730540b3e0c8c", expectedSha)
     val s = FluxPromptInfluenceMetrics.summarizeFp32(floatArrayOf(1f))
-    assertEquals("e00e5eb9444185c7d74dfc76b89e8f925bca9476a06e9b6e20fb3519425c0fd1", s.sha256LittleEndian)
+    assertEquals(expectedSha, s.sha256LittleEndian)
     val same = FluxPromptInfluenceMetrics.compareFp32(floatArrayOf(1f,2f), floatArrayOf(1f,2f))
     assertEquals(0.0, same.mae); assertEquals(0.0, same.rmse); assertEquals(1.0, same.cosineSimilarity)
     val different = FluxPromptInfluenceMetrics.compareFp32(floatArrayOf(1f,2f), floatArrayOf(2f,4f))
