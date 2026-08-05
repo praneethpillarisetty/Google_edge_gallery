@@ -187,7 +187,7 @@ class FluxTransformerDenoisingVerificationViewModel @Inject constructor(
               val textMillis = elapsed(textStart)
               coroutineContext.ensureActive()
               update(FluxTransformerVerificationStage.ASSEMBLING_EDIT_SEQUENCE, started)
-              val core = FluxTransformerDenoiser(runner).run(root, manifest, evidence, conditioning, reference) { progress ->
+              val core = FluxTransformerDenoiser(runner).run(root, manifest, evidence, evidence.initialLatents(), conditioning, reference) { progress ->
                 update(stageFor(progress.step, progress.graph), started, progress.step, progress.graph, progress.completedGraphs)
               }
               update(FluxTransformerVerificationStage.VALIDATING_FINAL_LATENTS, started, 4, "none", 32)

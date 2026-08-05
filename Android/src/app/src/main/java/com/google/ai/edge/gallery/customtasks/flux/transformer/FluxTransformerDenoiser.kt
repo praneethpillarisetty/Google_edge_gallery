@@ -87,6 +87,7 @@ class FluxTransformerDenoiser(
     root: File,
     manifest: FluxModelManifest,
     evidence: FluxPhase2gEvidence,
+    initialLatents: FloatArray,
     prompt: FluxTextConditioning,
     reference: FluxReferenceTokens,
     onProgress: suspend (FluxDenoisingProgress) -> Unit = {},
@@ -99,7 +100,7 @@ class FluxTransformerDenoiser(
     val graphs = FluxTransformerDenoisingContracts.GRAPH_ORDER.associateWith { name ->
       File(canonical, name).canonicalFile.also { require(it.parentFile == canonical && it.isFile) { "Required transformer model inventory is missing or changed." } }
     }
-    var latents = evidence.initialLatents().also { validate("preflight", 0, "initial latents", it, 32_768) }
+    var latents = initialLatents.copyOf().also { validate("preflight", 0, "initial latents", it, 32_768) }
     val referenceValues = reference.copyValues().also { validate("preflight", 0, "reference tokens", it, 32_768) }
     val cos = evidence.cos().also { validate("preflight", 0, "rotary cosine", it, 65_536) }
     val sin = evidence.sin().also { validate("preflight", 0, "rotary sine", it, 65_536) }

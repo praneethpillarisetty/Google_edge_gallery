@@ -32,7 +32,7 @@ class FluxTransformerDenoiserTest {
     val runner = RecordingRunner(fixture.evidence)
     val clock = AtomicLong()
     val result = FluxTransformerDenoiser(runner) { clock.addAndGet(1_000_000) }
-      .run(fixture.root, fixture.manifest, fixture.evidence, fixture.prompt, fixture.reference)
+      .run(fixture.root, fixture.manifest, fixture.evidence, fixture.evidence.initialLatents(), fixture.prompt, fixture.reference)
     assertEquals(4, result.completedSteps)
     assertEquals(32, runner.calls.size)
     assertEquals(List(4) { FluxTransformerDenoisingContracts.GRAPH_ORDER }.flatten(), runner.calls)
@@ -67,7 +67,7 @@ class FluxTransformerDenoiserTest {
     for (failure in Failure.values()) {
       val fixture = fixture(); val runner = RecordingRunner(fixture.evidence, failure = failure)
       val error = assertFailsWith<FluxTransformerDenoisingException> {
-        FluxTransformerDenoiser(runner).run(fixture.root, fixture.manifest, fixture.evidence, fixture.prompt, fixture.reference)
+        FluxTransformerDenoiser(runner).run(fixture.root, fixture.manifest, fixture.evidence, fixture.evidence.initialLatents(), fixture.prompt, fixture.reference)
       }
       assertTrue(error.message!!.contains("Step 1")); assertTrue(error.message!!.contains("kce_prep.tflite"))
       assertEquals(listOf("kce_prep.tflite"), runner.calls)
@@ -76,14 +76,14 @@ class FluxTransformerDenoiserTest {
 
   @Test fun `graph failure prevents later graph and later step`() = runBlocking {
     val fixture = fixture(); val runner = RecordingRunner(fixture.evidence, failInvocation = 3)
-    assertFailsWith<FluxTransformerDenoisingException> { FluxTransformerDenoiser(runner).run(fixture.root, fixture.manifest, fixture.evidence, fixture.prompt, fixture.reference) }
+    assertFailsWith<FluxTransformerDenoisingException> { FluxTransformerDenoiser(runner).run(fixture.root, fixture.manifest, fixture.evidence, fixture.evidence.initialLatents(), fixture.prompt, fixture.reference) }
     assertEquals(3, runner.calls.size)
   }
 
   @Test fun `cancellation between graphs prevents next graph`() = runBlocking {
     val fixture = fixture(); val runner = RecordingRunner(fixture.evidence)
     val job = async {
-      FluxTransformerDenoiser(runner).run(fixture.root, fixture.manifest, fixture.evidence, fixture.prompt, fixture.reference) { progress ->
+      FluxTransformerDenoiser(runner).run(fixture.root, fixture.manifest, fixture.evidence, fixture.evidence.initialLatents(), fixture.prompt, fixture.reference) { progress ->
         if (progress.completedGraphs == 1) throw CancellationException("test")
       }
     }
@@ -93,7 +93,7 @@ class FluxTransformerDenoiserTest {
 
   @Test fun `cancellation before run prevents graph creation`() = runBlocking {
     val fixture = fixture(); val runner = RecordingRunner(fixture.evidence)
-    val job = async { FluxTransformerDenoiser(runner).run(fixture.root, fixture.manifest, fixture.evidence, fixture.prompt, fixture.reference) }
+    val job = async { FluxTransformerDenoiser(runner).run(fixture.root, fixture.manifest, fixture.evidence, fixture.evidence.initialLatents(), fixture.prompt, fixture.reference) }
     job.cancelAndJoin()
     assertTrue(runner.calls.size < 32)
   }

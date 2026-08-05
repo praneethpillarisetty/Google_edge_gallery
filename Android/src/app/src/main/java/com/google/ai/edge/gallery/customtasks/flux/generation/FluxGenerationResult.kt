@@ -3,4 +3,4 @@ package com.google.ai.edge.gallery.customtasks.flux.generation
 
 import android.graphics.Bitmap
 
-data class FluxGenerationResult(val bitmap: Bitmap, val elapsedMillis: Long)
+data class FluxGenerationResult(val bitmap: Bitmap, val elapsedMillis: Long, val seed: Long)
