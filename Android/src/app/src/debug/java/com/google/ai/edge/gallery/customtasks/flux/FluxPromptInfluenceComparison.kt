@@ -71,6 +71,9 @@ class FluxPromptInfluenceComparisonViewModel @Inject constructor(
     if (!modelReadyHint) return fail("Model repository must be Ready before running comparison.")
     if (promptA.isBlank() || promptB.isBlank()) return fail("Prompt A and Prompt B are required.")
     val seed = try { FluxSeedParser.parseFixed(fixedSeedText).value } catch (_: IllegalArgumentException) { return fail("Fixed seed must be a signed 64-bit integer.") }
+    val previousState = mutableState.value
+    mutableState.value = FluxPromptComparisonState(running = true, stage = FluxPromptComparisonStage.VALIDATING)
+    recycleResultBitmaps(previousState)
     job = viewModelScope.launch {
       val started = System.nanoTime()
       val heapBefore = heap()
@@ -89,11 +92,21 @@ class FluxPromptInfluenceComparisonViewModel @Inject constructor(
             val decoderEvidence = FluxPhase2hEvidenceLoader(context.assets).load()
             val constants = FluxReferenceConstantsLoader(context.assets).load()
             val image = FluxReferenceImagePreprocessor().preprocess(staged)
-            val a = runOne("A", promptA, noiseA, root, manifest, metadata, evidence, decoderEvidence, constants, image, started)
-            coroutineContext.ensureActive()
-            val b = runOne("B", promptB, noiseB, root, manifest, metadata, evidence, decoderEvidence, constants, image, started)
-            update("none", FluxPromptComparisonStage.COMPARING, started, 4, 32)
-            buildComparison(seed, a, b, started, heapBefore, pssBefore)
+            var a: RunCapture? = null
+            var b: RunCapture? = null
+            var resultOwnsBitmaps = false
+            try {
+              a = runOne("A", promptA, noiseA, root, manifest, metadata, evidence, decoderEvidence, constants, image, started)
+              coroutineContext.ensureActive()
+              b = runOne("B", promptB, noiseB, root, manifest, metadata, evidence, decoderEvidence, constants, image, started)
+              update("none", FluxPromptComparisonStage.COMPARING, started, 4, 32)
+              buildComparison(seed, requireNotNull(a), requireNotNull(b), started, heapBefore, pssBefore).also { resultOwnsBitmaps = true }
+            } finally {
+              if (!resultOwnsBitmaps) {
+                a?.bitmap?.recycle()
+                b?.bitmap?.recycle()
+              }
+            }
           }
         }
         mutableState.value = FluxPromptComparisonState(stage = FluxPromptComparisonStage.COMPLETE, currentStep = 4, completedGraphs = 32, elapsedMillis = elapsed(started), summary = result.summary, bitmapA = result.bitmapA, bitmapB = result.bitmapB)
@@ -110,10 +123,11 @@ class FluxPromptInfluenceComparisonViewModel @Inject constructor(
   }
 
   fun cancel() { job?.cancel() }
-  override fun onCleared() { job?.cancel(); super.onCleared() }
+  override fun onCleared() { job?.cancel(); recycleResultBitmaps(mutableState.value); super.onCleared() }
 
   private suspend fun runOne(label: String, prompt: String, initialLatents: FloatArray, root: java.io.File, manifest: FluxModelManifest, metadata: List<FluxFileMetadata>, evidence: com.google.ai.edge.gallery.customtasks.flux.transformer.FluxPhase2gEvidence, decoderEvidence: com.google.ai.edge.gallery.customtasks.flux.decoder.FluxPhase2hEvidence, constants: com.google.ai.edge.gallery.customtasks.flux.image.FluxReferenceConstants, image: com.google.ai.edge.gallery.customtasks.flux.image.FluxReferenceImageTensor, started: Long): RunCapture {
     coroutineContext.ensureActive()
+    val runContext = coroutineContext
     update(label, FluxPromptComparisonStage.RUNNING_REFERENCE, started)
     FluxLiteRtEnvironment().use { environment ->
       val runner = environment.createGpuGraphRunner()
@@ -133,9 +147,9 @@ class FluxPromptInfluenceComparisonViewModel @Inject constructor(
       val finalLatents = core.copyFinalLatents()
       update(label, FluxPromptComparisonStage.DECODING, started, 4, 32)
       verifyModel(root, FluxVaeDecoder.GRAPH, manifest, metadata)
-      val decoderInput = FluxDecoderTail(decoderEvidence, constants).prepare(finalLatents.copyOf()) { coroutineContext.ensureActive() }.first
+      val decoderInput = FluxDecoderTail(decoderEvidence, constants).prepare(finalLatents.copyOf()) { runContext.ensureActive() }.first
       val decoded = FluxVaeDecoder(runner).decode(root, manifest, decoderInput)
-      val pixels = FluxDecodedBitmapConverter.pixels(decoded) { coroutineContext.ensureActive() }
+      val pixels = FluxDecodedBitmapConverter.pixels(decoded) { runContext.ensureActive() }
       val bitmap = Bitmap.createBitmap(pixels, 256, 256, Bitmap.Config.ARGB_8888)
       return RunCapture(label, tokens, conditioning.values.copyOf(), finalLatents, decoded.copyOf(), pixels, bitmap, core)
     }
@@ -176,6 +190,10 @@ class FluxPromptInfluenceComparisonViewModel @Inject constructor(
   private fun verifyModel(root: java.io.File, name: String, manifest: FluxModelManifest, metadata: List<FluxFileMetadata>) { require(name in manifest.files); verifySize(java.io.File(root.canonicalFile, name).canonicalFile, metadata) }
   private fun verifySize(file: java.io.File, metadata: List<FluxFileMetadata>) { val expected = metadata.singleOrNull { it.path == file.name || it.path.endsWith("/${file.name}") } ?: error("Required model metadata is missing."); require(file.length() == expected.size) }
   private fun fail(message: String, started: Long? = null) { mutableState.value = FluxPromptComparisonState(stage = FluxPromptComparisonStage.ERROR, elapsedMillis = started?.let(::elapsed) ?: 0, error = message, summary = "interpretation: ERROR") }
+  private fun recycleResultBitmaps(state: FluxPromptComparisonState) {
+    state.bitmapA?.takeUnless { it.isRecycled }?.recycle()
+    state.bitmapB?.takeUnless { it.isRecycled }?.recycle()
+  }
   private fun elapsed(start: Long) = (System.nanoTime() - start) / 1_000_000
   private fun heap() = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()
   private data class RunCapture(val label: String, val tokens: LongArray, val conditioning: FloatArray, val finalLatents: FloatArray, val decoder: FloatArray, val pixels: IntArray, val bitmap: Bitmap, val core: FluxTransformerCoreResult)
