@@ -568,3 +568,92 @@ A successful prompt-influence comparison proves only that different prompts prop
 ### Non-changes
 
 Phase 2J keeps resolution at 256×256, keeps FLUX denoising at four steps, keeps GPU FP32 mandatory, does not implement TPU/NPU/CPU/cloud fallback, does not add 512×512 generation, does not add super-resolution or face restoration, and does not change model artifacts, tokenizer binaries, evidence binaries, FLUX manifest entries, immutable model revision, graph filenames, graph order, graph contracts, LiteRT precision, guidance scale, negative prompts, edit-strength scaling, or scheduler behavior.
+
+## Phase 2K — Arena-style single-prompt and Figure editing
+
+Phase 2K adopts the **interaction pattern** common to modern instruction editors: select one
+reference, give one instruction (or structured Figure Edit settings), compile one positive
+prompt locally, generate, compare, and optionally use the result as the next reference. This
+is a UX pattern only. It does not reproduce or claim access to Arena's proprietary routing,
+hidden prompts, cloud infrastructure, or model quality, and no image-quality parity with
+Arena, Gemini, or Seedream is claimed.
+
+### Production modes and local model boundary
+
+The two production modes are **Simple Edit** and **Figure Edit**. Advanced generation is a
+collapsed settings section, not a mode. Both use only the installed FLUX.2 Klein LiteRT
+image-edit artifacts. That graph accepts exactly one reference-image conditioning sequence,
+so a reference is mandatory, Generate is disabled without it, text-to-image and
+multi-reference conditioning are not supported, and no empty or second latent is invented.
+There is no cloud fallback and no CPU, TPU, or NPU path. Existing GPU FP32 enforcement,
+sequential graph lifetime, four-step denoising schedule, and native 256×256 decoder contract
+remain unchanged.
+
+Simple Edit trims only outer UI whitespace and deterministically compiles the literal UTF-8
+instruction into one positive prompt. It preserves identity and realistic anatomy by default,
+optionally preserves pose/composition (on) and background (off), and preserves other
+properties unless intent detection says they are being changed. It adds no negative prompt,
+Qwen wrapper, guidance scale, edit strength, or tensor control. The conditioner remains the
+sole owner of chat wrapping and body-only truncation.
+
+Figure Edit offers Preserve current, Apply preset, and Custom actions. Its outfit, pose,
+location/background, framing/camera, lighting, hairstyle, makeup/expression, and accessories
+locks all default on. Preserve current emits no body-change clause and locks the current
+silhouette. Preset/custom emits exactly one body-change clause plus realistic anatomy,
+minimum necessary garment-fit deformation, and a clear-face instruction preserving head
+position/orientation, expression, view, visibility, and lighting. FaceFusion is an external
+user workflow: it is neither implemented nor invoked here, and FLUX is never asked to create
+a new identity.
+
+Built-ins are Preserve reference, Balanced natural, Athletic balanced, Soft curvy, Tall
+proportioned, and Petite proportioned. Their editable fields cover overall build, shoulders,
+torso, waist, hips, legs, and height impression using neutral relationship-based prose. User
+copies contain descriptive configuration only and may be renamed, updated, persisted locally,
+and deleted; built-ins cannot be deleted. Presets cannot contain images, URIs, paths,
+embeddings, identity, history, credentials, or identifiers.
+
+### Compiler, conflicts, diagnostics
+
+Intent matching is case-insensitive and boundary-aware. Groups cover outfit/clothing,
+background/location, pose, camera/framing, lighting, hair, makeup/expression, and body/figure,
+including the documented common words and phrases. An enabled Simple lock is omitted when its
+property changes. In Figure Edit an additional instruction that changes a locked property is
+blocked before generation and lists the exact locks; the user must explicitly unlock them,
+edit the instruction, or cancel. Locks are never silently disabled and contradictory clauses
+are never silently sent.
+
+Prompt compilation is deterministic and local, performs no Unicode normalization or network
+call, rejects blank Simple and Custom text, and never logs or sanitizes the prompt into
+diagnostics. Safe diagnostics are scalar metadata only (mode, non-private built-in preset,
+lock names, seed, timing, dimensions, ownership, and truncation). Custom descriptions,
+instructions, URIs, paths, filenames, provider data, image/tensor bytes, cache details, and
+credentials are excluded.
+
+### Iteration, outputs, and ownership
+
+**Edit this result** encodes the completed 256×256 bitmap off the main thread to a temporary
+app-owned PNG and atomically renames it before activation. Provider-owned originals are never
+overwritten or deleted. A failed/cancelled stage removes partial files and preserves the old
+reference/output; replacing an owned iterative reference removes the obsolete owned file.
+The mode and explicit fixed-seed selection remain, while Random produces a fresh seed at the
+next run. **Use this figure for subsequent edits** additionally selects Preserve current so a
+previous figure preset is not accidentally applied twice.
+
+The local result view includes Before/After, local instruction, mode, non-private preset name,
+actual/copy/reuse seed, fullscreen zoom/pan with Reset/Close, save/share, and iterative actions.
+The 1024×1024 export is filtered resizing, not AI super-resolution.
+
+Natural-language preservation is not a geometric guarantee, precise body measurements are
+not guaranteed, and major figure changes may alter garment fit. No exact measurements or
+sexualized defaults are supplied.
+
+### Build separation and verification
+
+Figure Edit and its compiler are production code in debug and release. Phase 2J Prompt A/B
+comparison and any compiled-prompt developer preview remain `src/debug` only; release has no
+developer entry point, prompt preview, tokenizer/graph/tensor controls, or diagnostic hashes.
+Unit tests cover literal compilation, rejection, intent boundaries, contradiction avoidance,
+figure action exclusivity, lock defaults/conflicts, face compatibility wording, minimum fit,
+and neutral built-ins. APK compilation, lint, duplicate-class checks, debug/release assembly,
+and archive inspection remain required. Real generation, thermal cancellation, visual quality,
+and lifecycle behavior still require verification on a physical supported Pixel.

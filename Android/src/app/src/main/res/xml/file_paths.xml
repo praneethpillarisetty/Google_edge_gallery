@@ -19,4 +19,7 @@
     <cache-path
         name="cache_pictures"
         path="images/" />
+    <files-path
+        name="flux_iterative"
+        path="flux_iterative/" />
 </paths>
