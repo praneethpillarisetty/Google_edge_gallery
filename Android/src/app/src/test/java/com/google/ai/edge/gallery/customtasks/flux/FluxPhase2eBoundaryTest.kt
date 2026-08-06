@@ -27,7 +27,7 @@ class FluxPhase2eBoundaryTest {
     }
     assertFalse(mainKotlin.contains("Developer verification — Reference VAE and tokens only"))
     val editor = source("app/src/main/java/com/google/ai/edge/gallery/customtasks/flux/FluxEditorScreen.kt")
-    assertContains(editor, "viewModel.generate(imageUri, prompt)")
+    assertContains(editor, "viewModel.generate(imageUri, compiled.positivePrompt")
   }
 
   @Test fun phase2eDoesNotNameOrInvokeDeferredGraphs() {

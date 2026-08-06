@@ -5,6 +5,20 @@ enum class FluxEditMode { SIMPLE, FIGURE }
 
 enum class FluxPromptIntent { OUTFIT, BACKGROUND, POSE, CAMERA, LIGHTING, HAIR, MAKEUP_EXPRESSION, BODY }
 
+enum class FluxRealismProfile { NATURAL_PHOTO, EDITORIAL_PHOTO, CINEMATIC_PHOTO }
+
+enum class FluxFramingCategory { UNSPECIFIED, FULL_BODY, THREE_QUARTER, WAIST_UP, CLOSE_UP }
+
+enum class FluxPoseCategory { NONE, GENERIC, SITTING, STANDING, GAIT, RAISED_ARMS, LEANING }
+
+data class FluxEditVisualContext(
+  val framing: FluxFramingCategory = FluxFramingCategory.UNSPECIFIED,
+  val handsVisible: Boolean = false,
+  val limbsOverlap: Boolean = false,
+  val faceTurned: Boolean = false,
+  val faceOccluded: Boolean = false,
+)
+
 sealed interface FluxFigureAction {
   data object PreserveCurrent : FluxFigureAction
   data class ApplyPreset(val presetId: String) : FluxFigureAction
@@ -16,6 +30,8 @@ data class FluxSimpleEditRequest(
   val preserveIdentity: Boolean = true,
   val preservePoseAndComposition: Boolean = true,
   val preserveBackground: Boolean = false,
+  val realismProfile: FluxRealismProfile = FluxRealismProfile.NATURAL_PHOTO,
+  val visualContext: FluxEditVisualContext = FluxEditVisualContext(),
 )
 
 data class FluxFigureEditRequest(
@@ -30,6 +46,8 @@ data class FluxFigureEditRequest(
   val preserveMakeupAndExpression: Boolean = true,
   val preserveAccessories: Boolean = true,
   val additionalInstruction: String? = null,
+  val realismProfile: FluxRealismProfile = FluxRealismProfile.NATURAL_PHOTO,
+  val visualContext: FluxEditVisualContext = FluxEditVisualContext(),
 )
 
 data class FluxPromptConflict(val intent: FluxPromptIntent, val lockName: String)
@@ -38,4 +56,7 @@ data class FluxCompiledPrompt(
   val positivePrompt: String,
   val intents: Set<FluxPromptIntent>,
   val conflicts: List<FluxPromptConflict> = emptyList(),
+  val sectionNames: Set<String> = emptySet(),
+  val framingCategory: FluxFramingCategory = FluxFramingCategory.UNSPECIFIED,
+  val poseCategory: FluxPoseCategory = FluxPoseCategory.NONE,
 )

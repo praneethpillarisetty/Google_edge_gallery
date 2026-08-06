@@ -657,3 +657,49 @@ figure action exclusivity, lock defaults/conflicts, face compatibility wording, 
 and neutral built-ins. APK compilation, lint, duplicate-class checks, debug/release assembly,
 and archive inspection remain required. Real generation, thermal cancellation, visual quality,
 and lifecycle behavior still require verification on a physical supported Pixel.
+
+### Phase 2K realism and anatomy correction
+
+The prompt compiler now places the requested edit/figure action immediately after the primary
+reference declaration, followed by enabled preservation, one invariant positive anatomy
+clause, only context-relevant framing/pose/hand/occlusion rules, clothing interaction, Figure
+face compatibility, exactly one realism profile, an optional additional instruction, and a
+short scope reminder. Literal user text is trimmed only at its UI edges, appears once, and is
+placed before generated boilerplate so the existing authoritative 512-token Qwen body-only
+truncation preserves its priority. Section values are deterministically deduplicated. The
+compiler does not normalize user Unicode or introduce a second wrapper.
+
+Advanced settings select Natural photo (default), Editorial photo, or Cinematic photo. Each
+maps to one concise photographic clause; inflated quality terms such as masterpiece, perfect,
+8K, or ultra-realistic are not added. The always-on anatomy invariant positively describes a
+single connected adult figure. Full-body/three-quarter, waist-up, and close-up framing select
+one appropriate visible-anatomy clause. Pose intent selects a general achievable-pose clause
+and at most one relevant specialization for sitting, standing, gait, raised arms, or leaning.
+Hands and limb-overlap clauses appear only when the typed visual context or literal instruction
+makes them relevant. Location changes receive a new-environment perspective clause instead of
+a contradictory original-background lock.
+
+Figure changes apply proportion adjustments coherently across the visible silhouette and
+skeletal connections. Preserve-current instead retains silhouette, relative proportions, and
+limb lengths and never emits a figure-change clause. Outfit locking describes plausible fabric
+drape, folds, seams, tension, coverage, occlusion, garment openings, and attached accessories.
+Every Figure prompt positively describes one coherent face and preserves head position,
+expression, view, visibility, and lighting for a later external identity-replacement workflow;
+turned and occluded face clauses are conditional. FaceFusion remains external and is not
+implemented or invoked.
+
+A debug-source-set-only `FluxPromptSectionReport` can carry section names, body-token count,
+truncation status, mode, framing/pose categories, realism profile, and lock names. Its type has
+no literal- or compiled-prompt field, and there is no release counterpart. Actual tokenization
+and body-only truncation remain exclusively in the authoritative tokenizer/conditioner.
+
+The result screen adds two explicit manual actions. **Regenerate with same settings** reuses
+the last reference and compiled settings; Fixed retains the selected signed 64-bit seed while
+Random naturally obtains fresh production noise. **Try a different seed** requires confirmation,
+selects Random, then starts one generation. There is no anatomy detector, quality scorer,
+automatic retry, extra graph input, or extra denoising step. In either action the previous
+bitmap remains until another generation succeeds.
+
+These positive instructions can reduce common structural errors but cannot guarantee perfect
+hands, faces, limbs, identity preservation, anatomy, or photographic realism. Physical Pixel
+verification remains required.

@@ -95,6 +95,8 @@ class FluxEditorViewModel @Inject constructor(
   val generationState = mutableGenerationState.asStateFlow()
   private var generationJob: Job? = null
   private val promptCompiler = FluxEditPromptCompiler()
+  private data class LastGeneration(val reference: Uri, val prompt: String, val mode: FluxEditMode, val instruction: String, val presetName: String?)
+  private var lastGeneration: LastGeneration? = null
   private val mutableUserPresets = MutableStateFlow<List<FluxFigurePreset>>(emptyList())
   val userPresets = mutableUserPresets.asStateFlow()
 
@@ -137,6 +139,7 @@ class FluxEditorViewModel @Inject constructor(
   fun generate(reference: Uri?, prompt: String, mode: FluxEditMode = FluxEditMode.SIMPLE, visibleInstruction: String = "", presetName: String? = null) {
     if (!canGenerate(reference, prompt) || generationJob?.isActive == true) return
     val selected = reference ?: return
+    lastGeneration = LastGeneration(selected, prompt, mode, visibleInstruction, presetName)
     generationJob = viewModelScope.launch {
       val started = System.nanoTime()
       val previous = mutableGenerationState.value.finalBitmap
@@ -175,6 +178,17 @@ class FluxEditorViewModel @Inject constructor(
         )
       }
     }
+  }
+
+  fun regenerateSameSettings() {
+    val last = lastGeneration ?: return
+    generate(last.reference, last.prompt, last.mode, last.instruction, last.presetName)
+  }
+
+  fun regenerateWithDifferentSeed() {
+    val last = lastGeneration ?: return
+    setSeedMode(FluxSeedSelection.Random)
+    generate(last.reference, last.prompt, last.mode, last.instruction, last.presetName)
   }
 
   fun stageResultForEditing(onReady: (Uri) -> Unit) {

@@ -47,7 +47,7 @@ class FluxPhase2fBoundaryTest {
     val release = source("app/src/release/java/com/google/ai/edge/gallery/customtasks/flux/FluxDeveloperVerificationSection.kt")
     assertFalse(release.contains("Editing transformer prep"))
     val editor = source("app/src/main/java/com/google/ai/edge/gallery/customtasks/flux/FluxEditorScreen.kt")
-    assertContains(editor, "viewModel.generate(imageUri, prompt)")
+    assertContains(editor, "viewModel.generate(imageUri, compiled.positivePrompt")
   }
 
   private fun source(relative: String) = Files.readString(projectRoot().resolve(relative))

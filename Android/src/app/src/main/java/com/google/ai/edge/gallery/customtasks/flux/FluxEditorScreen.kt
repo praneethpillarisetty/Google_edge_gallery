@@ -53,6 +53,7 @@ import com.google.ai.edge.gallery.customtasks.flux.generation.FluxSimpleEditRequ
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxBuiltInFigurePresets
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxFigureAttributes
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxFigurePreset
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxRealismProfile
 import kotlinx.coroutines.launch
 
 @Composable
@@ -65,22 +66,32 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
   var instruction by remember { mutableStateOf("") }
   var mode by remember { mutableStateOf(FluxEditMode.SIMPLE) }
   var advanced by remember { mutableStateOf(false) }
+  var realismProfile by remember { mutableStateOf(FluxRealismProfile.NATURAL_PHOTO) }
   var preserveIdentity by remember { mutableStateOf(true) }; var preservePoseSimple by remember { mutableStateOf(true) }; var preserveBackgroundSimple by remember { mutableStateOf(false) }
   var figureAction by remember { mutableStateOf<FluxFigureAction>(FluxFigureAction.PreserveCurrent) }
-  var presetIndex by remember { mutableStateOf(1) }; var figureDescription by remember { mutableStateOf(FluxBuiltInFigurePresets[presetIndex].attributes.description()) }
+  var presetIndex by remember { mutableStateOf(1) }; var figureDescription by remember { mutableStateOf(FluxBuiltInFigurePresets.all[presetIndex].attributes.description()) }
   var customPresetName by remember { mutableStateOf("My figure preset") }; var selectedUserPresetId by remember { mutableStateOf<String?>(null) }
   var preserveOutfit by remember { mutableStateOf(true) }; var preservePose by remember { mutableStateOf(true) }; var preserveBackground by remember { mutableStateOf(true) }; var preserveCamera by remember { mutableStateOf(true) }
   var preserveLighting by remember { mutableStateOf(true) }; var preserveHair by remember { mutableStateOf(true) }; var preserveMakeup by remember { mutableStateOf(true) }; var preserveAccessories by remember { mutableStateOf(true) }
   var conflicts by remember { mutableStateOf<List<String>>(emptyList()) }; var viewerOpen by remember { mutableStateOf(false) }; var showAfter by remember { mutableStateOf(true) }
+  var confirmDifferentSeed by remember { mutableStateOf(false) }
   val context = LocalContext.current; val resolver = context.contentResolver; val scope = rememberCoroutineScope()
   val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { selected ->
-    selected?.let { runCatching { resolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION) }; imageUri = it; originalUri = it }
+    selected?.let {
+      try {
+        resolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      } catch (_: SecurityException) {
+        // Some providers grant a process-lifetime read permission instead.
+      }
+      imageUri = selected
+      originalUri = selected
+    }
   }
-  fun figureRequest() = FluxFigureEditRequest(figureAction, figureDescription, preserveOutfit, preservePose, preserveBackground, preserveCamera, preserveLighting, preserveHair, preserveMakeup, preserveAccessories, instruction)
+  fun figureRequest() = FluxFigureEditRequest(figureAction, figureDescription, preserveOutfit, preservePose, preserveBackground, preserveCamera, preserveLighting, preserveHair, preserveMakeup, preserveAccessories, instruction, realismProfile)
   fun runGeneration(unlock: Boolean = false) {
     runCatching {
       if (mode == FluxEditMode.SIMPLE) {
-        val compiled = viewModel.compile(FluxSimpleEditRequest(instruction, preserveIdentity, preservePoseSimple, preserveBackgroundSimple))
+        val compiled = viewModel.compile(FluxSimpleEditRequest(instruction, preserveIdentity, preservePoseSimple, preserveBackgroundSimple, realismProfile))
         viewModel.generate(imageUri, compiled.positivePrompt, mode, instruction)
       } else {
         var request = figureRequest(); val compiled = viewModel.compile(request, figureDescription)
@@ -95,7 +106,7 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
           preserveMakeupAndExpression = preserveMakeup && "makeup and expression" !in conflicts,
           preserveAccessories = preserveAccessories && "accessories" !in conflicts)
         val resolved = viewModel.compile(request, figureDescription)
-        viewModel.generate(imageUri, resolved.positivePrompt, mode, instruction, FluxBuiltInFigurePresets.getOrNull(presetIndex)?.name)
+        viewModel.generate(imageUri, resolved.positivePrompt, mode, instruction, FluxBuiltInFigurePresets.all.getOrNull(presetIndex)?.name)
         conflicts = emptyList()
       }
     }.onFailure { viewModel.outputError(it.message ?: "The edit instruction is invalid.") }
@@ -111,7 +122,7 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
         Row { OutlinedButton(viewModel::pause) { Text("Pause") }; OutlinedButton(viewModel::cancel) { Text("Cancel download") } }
       }
       FluxEditorUiState.Paused -> Row { Button(viewModel::retry) { Text("Resume") }; OutlinedButton(viewModel::cancel) { Text("Cancel download") } }
-      is FluxEditorUiState.Error -> { Text(state.message); Button(viewModel::refresh) { Text("Retry") } }
+      is FluxEditorUiState.Error -> { Text((state as FluxEditorUiState.Error).message); Button(viewModel::refresh) { Text("Retry") } }
       is FluxEditorUiState.Ready -> Text("Models ready")
     }
     OutlinedButton({ picker.launch(arrayOf("image/*")) }, enabled = !generation.running, modifier = Modifier.fillMaxWidth()) { Text("Select reference image") }
@@ -126,13 +137,13 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
       Text("Figure action")
       Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         OutlinedButton({ figureAction = FluxFigureAction.PreserveCurrent }) { Text("Preserve current") }
-        OutlinedButton({ figureAction = FluxFigureAction.ApplyPreset(FluxBuiltInFigurePresets[presetIndex].id) }) { Text("Apply preset") }
+        OutlinedButton({ figureAction = FluxFigureAction.ApplyPreset(FluxBuiltInFigurePresets.all[presetIndex].id) }) { Text("Apply preset") }
         OutlinedButton({ figureAction = FluxFigureAction.Custom(figureDescription) }) { Text("Custom") }
       }
-      Text("Figure preset: ${FluxBuiltInFigurePresets[presetIndex].name}")
+      Text("Figure preset: ${FluxBuiltInFigurePresets.all[presetIndex].name}")
       Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        OutlinedButton({ presetIndex = (presetIndex - 1).coerceAtLeast(0); figureDescription = FluxBuiltInFigurePresets[presetIndex].attributes.description(); figureAction = FluxFigureAction.ApplyPreset(FluxBuiltInFigurePresets[presetIndex].id) }) { Text("Previous") }
-        OutlinedButton({ presetIndex = (presetIndex + 1).coerceAtMost(FluxBuiltInFigurePresets.lastIndex); figureDescription = FluxBuiltInFigurePresets[presetIndex].attributes.description(); figureAction = FluxFigureAction.ApplyPreset(FluxBuiltInFigurePresets[presetIndex].id) }) { Text("Next") }
+        OutlinedButton({ presetIndex = (presetIndex - 1).coerceAtLeast(0); figureDescription = FluxBuiltInFigurePresets.all[presetIndex].attributes.description(); figureAction = FluxFigureAction.ApplyPreset(FluxBuiltInFigurePresets.all[presetIndex].id) }) { Text("Previous") }
+        OutlinedButton({ presetIndex = (presetIndex + 1).coerceAtMost(FluxBuiltInFigurePresets.all.lastIndex); figureDescription = FluxBuiltInFigurePresets.all[presetIndex].attributes.description(); figureAction = FluxFigureAction.ApplyPreset(FluxBuiltInFigurePresets.all[presetIndex].id) }) { Text("Next") }
       }
       OutlinedTextField(figureDescription, { figureDescription = it; if (figureAction is FluxFigureAction.Custom) figureAction = FluxFigureAction.Custom(it) }, Modifier.fillMaxWidth(), label = { Text("Editable figure attributes: build, shoulders, torso, waist, hips, legs, height") }, minLines = 3)
       OutlinedTextField(customPresetName, { customPresetName = it }, Modifier.fillMaxWidth(), label = { Text("Custom preset name") })
@@ -149,16 +160,24 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
       Lock("Preserve lighting", preserveLighting) { preserveLighting = it }; Lock("Preserve hairstyle", preserveHair) { preserveHair = it }; Lock("Preserve makeup/expression", preserveMakeup) { preserveMakeup = it }; Lock("Preserve accessories", preserveAccessories) { preserveAccessories = it }
       OutlinedTextField(instruction, { instruction = it }, Modifier.fillMaxWidth(), label = { Text("Additional instruction") })
       Text("Figure controls are natural-language instructions, not exact geometric constraints. Major body changes may require small clothing-fit adjustments.")
+      Text("Realism and anatomy controls guide the model through natural-language instructions. They reduce common structural errors but cannot guarantee perfect hands, faces, limbs or identity preservation.")
     }
     OutlinedButton({ advanced = !advanced }, Modifier.fillMaxWidth()) { Text(if (advanced) "Hide Advanced generation" else "Advanced generation") }
     if (advanced) {
+      Text("Realism")
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FluxRealismProfile.entries.forEach { profile ->
+          val label = when (profile) { FluxRealismProfile.NATURAL_PHOTO -> "Natural photo"; FluxRealismProfile.EDITORIAL_PHOTO -> "Editorial photo"; FluxRealismProfile.CINEMATIC_PHOTO -> "Cinematic photo" }
+          OutlinedButton({ realismProfile = profile }, enabled = !generation.running) { Text(if (realismProfile == profile) "$label ✓" else label) }
+        }
+      }
       Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedButton({ viewModel.setSeedMode(FluxSeedSelection.Random) }) { Text("Random seed") }; OutlinedButton({ viewModel.setSeedMode(FluxSeedSelection.Fixed(generation.fixedSeedText.toLongOrNull() ?: 0)) }) { Text("Fixed seed") }; OutlinedButton(viewModel::randomizeSeed) { Text("Randomize seed") } }
       if (generation.seedSelection is FluxSeedSelection.Fixed) OutlinedTextField(generation.fixedSeedText, viewModel::setFixedSeedText, label = { Text("Fixed seed (signed 64-bit)") })
       if (mode == FluxEditMode.SIMPLE) { Lock("Preserve facial identity", preserveIdentity) { preserveIdentity = it }; Lock("Preserve pose/composition", preservePoseSimple) { preservePoseSimple = it }; Lock("Preserve background", preserveBackgroundSimple) { preserveBackgroundSimple = it } }
       Text("These options are prompt instructions, not guaranteed numerical controls.")
     }
     generation.actualSeed?.let { seed -> Row { Text("Actual seed used: $seed"); OutlinedButton({ context.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText("FLUX seed", seed.toString())) }) { Text("Copy seed") }; OutlinedButton({ viewModel.setSeedMode(FluxSeedSelection.Fixed(seed)); viewModel.setFixedSeedText(seed.toString()) }) { Text("Use same seed again") } } }
-    Button({ runGeneration() }, enabled = imageUri != null && !generation.running && state is FluxEditorUiState.Ready && (mode == FluxEditMode.FIGURE || instruction.isNotBlank()), modifier = Modifier.fillMaxWidth()) { Text("Generate") }
+    Button({ runGeneration() }, enabled = viewModel.canGenerate(imageUri, if (mode == FluxEditMode.SIMPLE) instruction else "figure edit"), modifier = Modifier.fillMaxWidth()) { Text("Generate") }
     if (generation.running) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("${generation.stage}: step ${generation.currentStep}/4 — ${generation.elapsedMillis} ms"); OutlinedButton(viewModel::cancelGeneration) { Text("Cancel") } }
     generation.sanitizedError?.let { Text(it) }
     generation.finalBitmap?.let { bitmap ->
@@ -171,11 +190,14 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
       Text("1024×1024 export is filtered resizing, not AI super-resolution.")
       Button({ viewModel.stageResultForEditing { imageUri = it; instruction = "" } }, enabled = !generation.stagingReference) { Text("Edit this result") }
       if (generation.editingMode == FluxEditMode.FIGURE) Button({ viewModel.stageResultForEditing { imageUri = it; instruction = ""; figureAction = FluxFigureAction.PreserveCurrent } }) { Text("Use this figure for subsequent edits") }
+      Button(viewModel::regenerateSameSettings, enabled = !generation.running) { Text("Regenerate with same settings") }
+      OutlinedButton({ confirmDifferentSeed = true }, enabled = !generation.running) { Text("Try a different seed") }
       if (viewerOpen) FluxFullscreenViewer(bitmap) { viewerOpen = false }
     }
     FluxDeveloperVerificationSection(state is FluxEditorUiState.Ready, imageUri, instruction)
   }
   if (conflicts.isNotEmpty()) AlertDialog(onDismissRequest = { conflicts = emptyList() }, title = { Text("Instruction conflicts with locks") }, text = { Text(conflicts.joinToString("\n")) }, confirmButton = { Button({ runGeneration(true) }) { Text("Unlock conflicting properties") } }, dismissButton = { Row { OutlinedButton({ conflicts = emptyList() }) { Text("Edit instruction") }; OutlinedButton({ conflicts = emptyList() }) { Text("Cancel") } } })
+  if (confirmDifferentSeed) AlertDialog(onDismissRequest = { confirmDifferentSeed = false }, title = { Text("Try a different seed?") }, text = { Text("This starts one manual generation with a fresh random seed. The current result remains visible until the new result succeeds.") }, confirmButton = { Button({ confirmDifferentSeed = false; viewModel.regenerateWithDifferentSeed() }) { Text("Generate") } }, dismissButton = { OutlinedButton({ confirmDifferentSeed = false }) { Text("Cancel") } })
 }
 
 @Composable private fun Lock(label: String, checked: Boolean, change: (Boolean) -> Unit) { Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(checked, change); Text(label) } }
