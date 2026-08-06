@@ -65,6 +65,9 @@ class FluxQwenTokenizer private constructor(private val data: TokenizerData) {
     return FluxPromptTokens(ids, BooleanArray(MAX_TOKENS) { it < count })
   }
 
+  /** Authoritative body count for debug budgeting; does not add the Qwen wrapper. */
+  fun bodyTokenCount(text: String): Int = tokenize(text).size
+
   private fun tokenizeOrdinary(text: String, output: MutableList<Int>) {
     val matcher = PRETOKENIZER.matcher(text)
     var consumed = 0
@@ -106,6 +109,7 @@ class FluxQwenTokenizer private constructor(private val data: TokenizerData) {
 
   companion object {
     const val MAX_TOKENS = 512
+    val MAX_BODY_TOKENS: Int get() = MAX_TOKENS - TEMPLATE_PREFIX.size - TEMPLATE_SUFFIX.size
     const val END_OF_TEXT = "<|endoftext|>"
     private val TEMPLATE_PREFIX = intArrayOf(151644, 872, 198)
     private val TEMPLATE_SUFFIX = intArrayOf(151645, 198, 151644, 77091, 198, 151667, 271, 151668, 271)

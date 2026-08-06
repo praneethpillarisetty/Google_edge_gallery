@@ -20,6 +20,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -44,129 +46,182 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.google.ai.edge.gallery.R
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxSeedSelection
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxEditMode
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxFigureAction
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxFigureEditRequest
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxSimpleEditRequest
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxBuiltInFigurePresets
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxFigureAttributes
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxFigurePreset
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxRealismProfile
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxEditVisualContext
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxFramingCategory
 import kotlinx.coroutines.launch
 
 @Composable
 fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
   val state by viewModel.uiState.collectAsState()
   val generation by viewModel.generationState.collectAsState()
-  var imageUri by remember { mutableStateOf<Uri?>(null) }
-  var prompt by remember { mutableStateOf("") }
-  val referencePreviewDescription =
-    stringResource(R.string.flux_reference_preview_description)
-  val resolver = LocalContext.current.contentResolver
-  val context = LocalContext.current
-  val scope = rememberCoroutineScope()
-  var viewerOpen by remember { mutableStateOf(false) }
+  val compilation by viewModel.compilationState.collectAsState()
+  val userPresets by viewModel.userPresets.collectAsState()
+  var imageUri by remember { mutableStateOf<Uri?>(generation.iterativeReference) }
+  var originalUri by remember { mutableStateOf<Uri?>(null) }
+  var instruction by remember { mutableStateOf("") }
+  var mode by remember { mutableStateOf(FluxEditMode.SIMPLE) }
+  var advanced by remember { mutableStateOf(false) }
+  var realismProfile by remember { mutableStateOf(FluxRealismProfile.NATURAL_PHOTO) }
+  var preserveIdentity by remember { mutableStateOf(true) }; var preservePoseSimple by remember { mutableStateOf(true) }; var preserveBackgroundSimple by remember { mutableStateOf(false) }
+  var figureAction by remember { mutableStateOf<FluxFigureAction>(FluxFigureAction.PreserveCurrent) }
+  var presetIndex by remember { mutableStateOf(1) }
+  val initialAttributes = FluxBuiltInFigurePresets.all[presetIndex].attributes
+  var overallBuild by remember { mutableStateOf(initialAttributes.overallBuild) }; var shoulders by remember { mutableStateOf(initialAttributes.shoulders) }
+  var torso by remember { mutableStateOf(initialAttributes.torso) }; var waist by remember { mutableStateOf(initialAttributes.waist) }
+  var hips by remember { mutableStateOf(initialAttributes.hips) }; var legs by remember { mutableStateOf(initialAttributes.legs) }; var heightImpression by remember { mutableStateOf(initialAttributes.heightImpression) }
+  var framing by remember { mutableStateOf(FluxFramingCategory.UNSPECIFIED) }; var handsVisible by remember { mutableStateOf(false) }
+  var limbsOverlap by remember { mutableStateOf(false) }; var faceTurned by remember { mutableStateOf(false) }; var faceOccluded by remember { mutableStateOf(false) }
+  var customPresetName by remember { mutableStateOf("My figure preset") }; var selectedUserPresetId by remember { mutableStateOf<String?>(null) }
+  var preserveOutfit by remember { mutableStateOf(true) }; var preservePose by remember { mutableStateOf(true) }; var preserveBackground by remember { mutableStateOf(true) }; var preserveCamera by remember { mutableStateOf(true) }
+  var preserveLighting by remember { mutableStateOf(true) }; var preserveHair by remember { mutableStateOf(true) }; var preserveMakeup by remember { mutableStateOf(true) }; var preserveAccessories by remember { mutableStateOf(true) }
+  var conflicts by remember { mutableStateOf<List<String>>(emptyList()) }; var viewerOpen by remember { mutableStateOf(false) }; var showAfter by remember { mutableStateOf(true) }
+  var confirmDifferentSeed by remember { mutableStateOf(false) }
+  val context = LocalContext.current; val resolver = context.contentResolver; val scope = rememberCoroutineScope()
   val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { selected ->
     selected?.let {
       try {
         resolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION)
       } catch (_: SecurityException) {
-        // Some document providers grant read access only for the current process.
+        // Some providers grant a process-lifetime read permission instead.
       }
+      imageUri = selected
+      originalUri = selected
     }
-    imageUri = selected
   }
-  val totalBytes = when (state) {
-    is FluxEditorUiState.NotInstalled -> (state as FluxEditorUiState.NotInstalled).totalBytes
-    is FluxEditorUiState.Downloading -> (state as FluxEditorUiState.Downloading).files.sumOf { it.total }
-    is FluxEditorUiState.Ready -> (state as FluxEditorUiState.Ready).totalBytes
-    else -> 0L
+  fun attributes() = FluxFigureAttributes(overallBuild, shoulders, torso, waist, hips, legs, heightImpression)
+  fun loadAttributes(value: FluxFigureAttributes) { overallBuild = value.overallBuild; shoulders = value.shoulders; torso = value.torso; waist = value.waist; hips = value.hips; legs = value.legs; heightImpression = value.heightImpression }
+  fun figureRequest() = FluxFigureEditRequest(if (figureAction is FluxFigureAction.Custom) FluxFigureAction.Custom(attributes().description()) else figureAction, attributes().description(), preserveOutfit, preservePose, preserveBackground, preserveCamera, preserveLighting, preserveHair, preserveMakeup, preserveAccessories, instruction, realismProfile,
+    FluxEditVisualContext(framing, handsVisible, limbsOverlap, faceTurned, faceOccluded))
+  fun runGeneration(unlock: Boolean = false) {
+    if (mode == FluxEditMode.SIMPLE) {
+      viewModel.compileSimpleAndGenerate(imageUri, FluxSimpleEditRequest(instruction, preserveIdentity, preservePoseSimple, preserveBackgroundSimple, realismProfile), instruction)
+    } else {
+      var request = figureRequest()
+      if (unlock) request = request.copy(
+          preserveOutfit = preserveOutfit && "outfit" !in conflicts,
+          preservePose = preservePose && "pose and hand placement" !in conflicts,
+          preserveBackground = preserveBackground && "location and background" !in conflicts,
+          preserveCamera = preserveCamera && "framing and camera" !in conflicts,
+          preserveLighting = preserveLighting && "lighting and shadows" !in conflicts,
+          preserveHair = preserveHair && "hairstyle" !in conflicts,
+          preserveMakeupAndExpression = preserveMakeup && "makeup and expression" !in conflicts,
+          preserveAccessories = preserveAccessories && "accessories" !in conflicts)
+      if (unlock) conflicts = emptyList()
+      viewModel.compileFigureAndGenerate(imageUri, request, attributes().description(), instruction,
+        FluxBuiltInFigurePresets.all.getOrNull(presetIndex)?.name) { conflicts = it }
+    }
   }
-
   Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-    Text(stringResource(R.string.flux_phase_one_notice))
-    OutlinedButton(onClick = { picker.launch(arrayOf("image/*")) }, enabled = !generation.running, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.flux_pick_reference)) }
-    imageUri?.let { selected ->
-      AndroidView(
-        factory = { viewContext ->
-          ImageView(viewContext).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
-        },
-        update = { imageView ->
-          imageView.contentDescription = referencePreviewDescription
-          imageView.setImageURI(selected)
-        },
-        modifier = Modifier.fillMaxWidth().height(220.dp),
-      )
-    }
-    OutlinedTextField(prompt, { prompt = it }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.flux_edit_prompt)) }, minLines = 3)
-    Text(stringResource(R.string.flux_model_status, statusText(state)))
-    Text(if (totalBytes > 0) stringResource(R.string.flux_storage_requirement, DefaultFluxDownloadRepository.formatBytes(totalBytes), DefaultFluxDownloadRepository.formatBytes(totalBytes + DefaultFluxDownloadRepository.SAFETY_MARGIN)) else stringResource(R.string.flux_storage_checking))
-    when (val current = state) {
+    Text("Local FLUX image editor")
+    Text("Model status: ${statusText(state)}")
+    when (state) {
       FluxEditorUiState.Checking -> CircularProgressIndicator()
-      is FluxEditorUiState.NotInstalled -> Button(viewModel::download) { Text(stringResource(R.string.flux_download_models)) }
+      is FluxEditorUiState.NotInstalled -> Button(viewModel::download) { Text("Download models") }
       is FluxEditorUiState.Downloading -> {
-        val received = current.files.sumOf { it.received }
-        LinearProgressIndicator({ if (totalBytes == 0L) 0f else received.toFloat() / totalBytes }, Modifier.fillMaxWidth())
-        current.files.forEach { file ->
-          Text("${file.path}: ${DefaultFluxDownloadRepository.formatBytes(file.received)} / ${DefaultFluxDownloadRepository.formatBytes(file.total)}")
-          LinearProgressIndicator({ file.received.toFloat() / file.total }, Modifier.fillMaxWidth())
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          OutlinedButton(viewModel::pause) { Text(stringResource(R.string.flux_pause)) }
-          OutlinedButton(viewModel::cancel) { Text(stringResource(R.string.cancel)) }
-        }
+        LinearProgressIndicator(Modifier.fillMaxWidth())
+        Row { OutlinedButton(viewModel::pause) { Text("Pause") }; OutlinedButton(viewModel::cancel) { Text("Cancel download") } }
       }
-      FluxEditorUiState.Paused -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button(viewModel::retry) { Text(stringResource(R.string.flux_retry)) }
-        OutlinedButton(viewModel::cancel) { Text(stringResource(R.string.cancel)) }
-      }
-      is FluxEditorUiState.Error -> {
-        Text(current.message)
-        Button(viewModel::refresh) { Text(stringResource(R.string.flux_retry)) }
-      }
-      is FluxEditorUiState.Ready -> Text(stringResource(R.string.flux_model_ready))
+      FluxEditorUiState.Paused -> Row { Button(viewModel::retry) { Text("Resume") }; OutlinedButton(viewModel::cancel) { Text("Cancel download") } }
+      is FluxEditorUiState.Error -> { Text((state as FluxEditorUiState.Error).message); Button(viewModel::refresh) { Text("Retry") } }
+      is FluxEditorUiState.Ready -> Text("Models ready")
     }
-    Text(if (imageUri == null) "Select a reference image to edit. Text-to-image requires an additional model package." else "Mode: Image edit")
-    Text("Advanced generation")
+    OutlinedButton({ picker.launch(arrayOf("image/*")) }, enabled = !generation.running, modifier = Modifier.fillMaxWidth()) { Text("Select reference image") }
+    imageUri?.let { uri -> AndroidView(factory = { ImageView(it).apply { scaleType = ImageView.ScaleType.FIT_CENTER } }, update = { it.setImageURI(uri); it.contentDescription = "Selected reference image" }, modifier = Modifier.fillMaxWidth().height(220.dp)) }
+    if (imageUri == null) Text("This local FLUX model requires a reference image. Text-to-image is not available with the installed model package.")
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-      OutlinedButton(onClick = { viewModel.setSeedMode(FluxSeedSelection.Random) }, enabled = !generation.running) { Text(if (generation.seedSelection is FluxSeedSelection.Random) "Random seed ✓" else "Random seed") }
-      OutlinedButton(onClick = { viewModel.setSeedMode(FluxSeedSelection.Fixed(generation.fixedSeedText.toLongOrNull() ?: 0L)) }, enabled = !generation.running) { Text(if (generation.seedSelection is FluxSeedSelection.Fixed) "Fixed seed ✓" else "Fixed seed") }
-      OutlinedButton(onClick = viewModel::randomizeSeed, enabled = !generation.running) { Text("Randomize seed") }
+      OutlinedButton({ mode = FluxEditMode.SIMPLE }, enabled = !generation.running) { Text(if (mode == FluxEditMode.SIMPLE) "Simple Edit ✓" else "Simple Edit") }
+      OutlinedButton({ mode = FluxEditMode.FIGURE }, enabled = !generation.running) { Text(if (mode == FluxEditMode.FIGURE) "Figure Edit ✓" else "Figure Edit") }
     }
-    if (generation.seedSelection is FluxSeedSelection.Fixed) {
-      OutlinedTextField(generation.fixedSeedText, viewModel::setFixedSeedText, Modifier.fillMaxWidth(), label = { Text("Fixed seed (signed 64-bit integer)") }, singleLine = true, enabled = !generation.running)
-    }
-    generation.actualSeed?.let { used ->
-      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Actual seed used: $used")
-        OutlinedButton(onClick = { context.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText("FLUX seed", used.toString())) }) { Text("Copy seed") }
+    if (mode == FluxEditMode.SIMPLE) OutlinedTextField(instruction, { instruction = it }, Modifier.fillMaxWidth(), label = { Text("Describe your edit") }, minLines = 3)
+    else {
+      Text("Figure action")
+      Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        OutlinedButton({ figureAction = FluxFigureAction.PreserveCurrent }) { Text("Preserve current") }
+        OutlinedButton({ figureAction = FluxFigureAction.ApplyPreset(FluxBuiltInFigurePresets.all[presetIndex].id) }) { Text("Apply preset") }
+        OutlinedButton({ figureAction = FluxFigureAction.Custom(attributes().description()) }) { Text("Custom") }
       }
+      Text("Figure preset: ${FluxBuiltInFigurePresets.all[presetIndex].name}")
+      Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        OutlinedButton({ presetIndex = (presetIndex - 1).coerceAtLeast(0); loadAttributes(FluxBuiltInFigurePresets.all[presetIndex].attributes); figureAction = FluxFigureAction.ApplyPreset(FluxBuiltInFigurePresets.all[presetIndex].id); selectedUserPresetId = null }) { Text("Previous") }
+        OutlinedButton({ presetIndex = (presetIndex + 1).coerceAtMost(FluxBuiltInFigurePresets.all.lastIndex); loadAttributes(FluxBuiltInFigurePresets.all[presetIndex].attributes); figureAction = FluxFigureAction.ApplyPreset(FluxBuiltInFigurePresets.all[presetIndex].id); selectedUserPresetId = null }) { Text("Next") }
+      }
+      FigureAttributeField("Overall build", overallBuild) { overallBuild = it }; FigureAttributeField("Shoulder proportions", shoulders) { shoulders = it }
+      FigureAttributeField("Torso proportions", torso) { torso = it }; FigureAttributeField("Waist definition", waist) { waist = it }
+      FigureAttributeField("Hip proportions", hips) { hips = it }; FigureAttributeField("Leg proportions", legs) { legs = it }
+      FigureAttributeField("Height impression", heightImpression) { heightImpression = it }
+      OutlinedTextField(customPresetName, { customPresetName = it }, Modifier.fillMaxWidth(), label = { Text("Custom preset name") })
+      Row {
+        OutlinedButton({
+          val id = selectedUserPresetId ?: "user.${System.currentTimeMillis()}"
+          viewModel.savePreset(FluxFigurePreset(id, customPresetName.trim(), attributes(), false)); selectedUserPresetId = id
+        }, enabled = customPresetName.isNotBlank() && attributes().description().isNotBlank()) { Text(if (selectedUserPresetId == null) "Save user copy" else "Update preset") }
+        selectedUserPresetId?.let { id -> OutlinedButton({ viewModel.deletePreset(id); selectedUserPresetId = null }) { Text("Delete custom preset") } }
+      }
+      userPresets.forEach { saved -> OutlinedButton({ selectedUserPresetId = saved.id; customPresetName = saved.name; loadAttributes(saved.attributes); figureAction = FluxFigureAction.Custom(saved.attributes.description()) }) { Text("Use ${saved.name}") } }
+      Text("Framing and visibility")
+      FluxFramingCategory.entries.forEach { value -> OutlinedButton({ framing = value }) { Text((if (value == FluxFramingCategory.UNSPECIFIED) "Match reference / Unspecified" else value.name.replace('_', ' ').lowercase()).let { if (framing == value) "$it ✓" else it }) } }
+      Lock("Hands are clearly visible", handsVisible) { handsVisible = it }; Lock("Limbs cross or overlap", limbsOverlap) { limbsOverlap = it }
+      Lock("Face is turned", faceTurned) { faceTurned = it }; Lock("Face is partially occluded", faceOccluded) { faceOccluded = it }
+      Text("These controls describe visible reference-image structure. They do not run an automatic body detector.")
+      Text("Preservation locks")
+      Lock("Preserve outfit", preserveOutfit) { preserveOutfit = it }; Lock("Preserve pose", preservePose) { preservePose = it }; Lock("Preserve location/background", preserveBackground) { preserveBackground = it }; Lock("Preserve framing/camera", preserveCamera) { preserveCamera = it }
+      Lock("Preserve lighting", preserveLighting) { preserveLighting = it }; Lock("Preserve hairstyle", preserveHair) { preserveHair = it }; Lock("Preserve makeup/expression", preserveMakeup) { preserveMakeup = it }; Lock("Preserve accessories", preserveAccessories) { preserveAccessories = it }
+      OutlinedTextField(instruction, { instruction = it }, Modifier.fillMaxWidth(), label = { Text("Additional instruction") })
+      Text("Figure controls are natural-language instructions, not exact geometric constraints. Major body changes may require small clothing-fit adjustments.")
+      Text("Realism and anatomy controls guide the model through natural-language instructions. They reduce common structural errors but cannot guarantee perfect hands, faces, limbs or identity preservation.")
     }
-    Button(onClick = { viewModel.generate(imageUri, prompt) }, enabled = viewModel.canGenerate(imageUri, prompt), modifier = Modifier.fillMaxWidth()) {
-      Text(stringResource(R.string.flux_generate))
+    OutlinedButton({ advanced = !advanced }, Modifier.fillMaxWidth()) { Text(if (advanced) "Hide Advanced generation" else "Advanced generation") }
+    if (advanced) {
+      Text("Realism")
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FluxRealismProfile.entries.forEach { profile ->
+          val label = when (profile) { FluxRealismProfile.NATURAL_PHOTO -> "Natural photo"; FluxRealismProfile.EDITORIAL_PHOTO -> "Editorial photo"; FluxRealismProfile.CINEMATIC_PHOTO -> "Cinematic photo" }
+          OutlinedButton({ realismProfile = profile }, enabled = !generation.running) { Text(if (realismProfile == profile) "$label ✓" else label) }
+        }
+      }
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedButton({ viewModel.setSeedMode(FluxSeedSelection.Random) }) { Text("Random seed") }; OutlinedButton({ viewModel.setSeedMode(FluxSeedSelection.Fixed(generation.fixedSeedText.toLongOrNull() ?: 0)) }) { Text("Fixed seed") }; OutlinedButton(viewModel::randomizeSeed) { Text("Randomize seed") } }
+      if (generation.seedSelection is FluxSeedSelection.Fixed) OutlinedTextField(generation.fixedSeedText, viewModel::setFixedSeedText, label = { Text("Fixed seed (signed 64-bit)") })
+      if (mode == FluxEditMode.SIMPLE) { Lock("Preserve facial identity", preserveIdentity) { preserveIdentity = it }; Lock("Preserve pose/composition", preservePoseSimple) { preservePoseSimple = it }; Lock("Preserve background", preserveBackgroundSimple) { preserveBackgroundSimple = it } }
+      Text("These options are prompt instructions, not guaranteed numerical controls.")
     }
-    if (generation.running) {
-      LinearProgressIndicator(Modifier.fillMaxWidth())
-      Text("Current stage: ${generation.stage}")
-      Text("Denoising step: ${generation.currentStep}/4")
-      generation.currentGraph?.let { Text("Current graph: $it") }
-      Text("Completed graphs: ${generation.completedGraphCount}/32")
-      Text("Elapsed: ${generation.elapsedMillis} ms")
-      OutlinedButton(viewModel::cancelGeneration) { Text("Cancel generation") }
-    }
+    generation.actualSeed?.let { seed -> Row { Text("Actual seed used: $seed"); OutlinedButton({ context.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText("FLUX seed", seed.toString())) }) { Text("Copy seed") }; OutlinedButton({ viewModel.setSeedMode(FluxSeedSelection.Fixed(seed)); viewModel.setFixedSeedText(seed.toString()) }) { Text("Use same seed again") } } }
+    Button({ runGeneration() }, enabled = compilation !is FluxPromptCompilationState.Compiling && viewModel.canGenerate(imageUri, if (mode == FluxEditMode.SIMPLE) instruction else "figure edit"), modifier = Modifier.fillMaxWidth()) { Text("Generate") }
+    if (compilation is FluxPromptCompilationState.Compiling) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Preparing prompt…"); OutlinedButton(viewModel::cancelGeneration) { Text("Cancel") } }
+    if (compilation is FluxPromptCompilationState.Error) Text((compilation as FluxPromptCompilationState.Error).message)
+    if (generation.running) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("${generation.stage}: step ${generation.currentStep}/4 — ${generation.elapsedMillis} ms"); OutlinedButton(viewModel::cancelGeneration) { Text("Cancel") } }
     generation.sanitizedError?.let { Text(it) }
     generation.finalBitmap?.let { bitmap ->
-      Text("Generated image")
-      Image(bitmap.asImageBitmap(), "Generated FLUX image; tap to open fullscreen", Modifier.fillMaxWidth().clickable { viewerOpen = true })
-      Text("Original dimensions: ${bitmap.width}×${bitmap.height}")
-      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button(onClick = { scope.launch { runCatching { viewModel.imageStore.savePng(bitmap) }.onSuccess(viewModel::saved).onFailure { viewModel.outputError("The PNG could not be saved.") } } }) { Text("Save PNG") }
-        Button(onClick = { scope.launch {
-          runCatching { generation.savedOutputUri ?: viewModel.imageStore.savePng(bitmap) }.onSuccess { uri ->
-            viewModel.saved(uri); val intent = viewModel.imageStore.shareIntent(uri)
-            if (viewModel.imageStore.canShare(intent)) context.startActivity(Intent.createChooser(intent, "Share FLUX image")) else viewModel.outputError("No compatible sharing app is available.")
-          }.onFailure { viewModel.outputError("The image could not be shared.") }
-        } }) { Text("Share") }
-      }
-      Button(onClick = { scope.launch { runCatching { viewModel.imageStore.saveResized1024(bitmap) }.onSuccess(viewModel::saved).onFailure { viewModel.outputError("The 1024×1024 resized export failed.") } } }) { Text("Export 1024×1024") }
-      Text("1024×1024 resized export — filtered resize, not AI super-resolution")
-      if (viewerOpen) FluxFullscreenViewer(bitmap = bitmap, onClose = { viewerOpen = false })
+      Text("Before / After")
+      Row { OutlinedButton({ showAfter = false }) { Text("Before") }; OutlinedButton({ showAfter = true }) { Text("After") } }
+      if (showAfter) Image(bitmap.asImageBitmap(), "Generated FLUX image", Modifier.fillMaxWidth().clickable { viewerOpen = true }) else imageUri?.let { uri -> AndroidView(factory = { ImageView(it) }, update = { it.setImageURI(uri) }, modifier = Modifier.fillMaxWidth().height(256.dp)) }
+      Text("Mode: ${generation.editingMode?.name ?: mode.name}"); generation.visibleInstruction?.takeIf { it.isNotBlank() }?.let { Text("Instruction: $it") }; generation.figurePresetName?.let { Text("Figure preset: $it") }
+      Row { Button({ scope.launch { runCatching { viewModel.imageStore.savePng(bitmap) }.onSuccess(viewModel::saved) } }) { Text("Save PNG") }; Button({ scope.launch { runCatching { generation.savedOutputUri ?: viewModel.imageStore.savePng(bitmap) }.onSuccess { uri -> viewModel.saved(uri); context.startActivity(Intent.createChooser(viewModel.imageStore.shareIntent(uri), "Share FLUX image")) } } }) { Text("Share") } }
+      Button({ scope.launch { runCatching { viewModel.imageStore.saveResized1024(bitmap) }.onSuccess(viewModel::saved) } }) { Text("Export 1024×1024") }
+      Text("1024×1024 export is filtered resizing, not AI super-resolution.")
+      Button({ viewModel.stageResultForEditing { imageUri = it; instruction = "" } }, enabled = !generation.stagingReference) { Text("Edit this result") }
+      if (generation.editingMode == FluxEditMode.FIGURE) Button({ viewModel.stageResultForEditing { imageUri = it; instruction = ""; figureAction = FluxFigureAction.PreserveCurrent } }) { Text("Use this figure for subsequent edits") }
+      Button(viewModel::regenerateSameSettings, enabled = !generation.running) { Text("Regenerate with same settings") }
+      OutlinedButton({ confirmDifferentSeed = true }, enabled = !generation.running) { Text("Try a different seed") }
+      if (viewerOpen) FluxFullscreenViewer(bitmap) { viewerOpen = false }
     }
-    generation.savedOutputUri?.let { Text("Saved content URI: $it") }
-    FluxDeveloperVerificationSection(modelReady = state is FluxEditorUiState.Ready, referenceUri = imageUri, editorPrompt = prompt)
+    FluxDeveloperVerificationSection(state is FluxEditorUiState.Ready, imageUri, instruction)
   }
+  if (conflicts.isNotEmpty()) AlertDialog(onDismissRequest = { conflicts = emptyList() }, title = { Text("Instruction conflicts with locks") }, text = { Text(conflicts.joinToString("\n")) }, confirmButton = { Button({ runGeneration(true) }) { Text("Unlock conflicting properties") } }, dismissButton = { Row { OutlinedButton({ conflicts = emptyList() }) { Text("Edit instruction") }; OutlinedButton({ conflicts = emptyList() }) { Text("Cancel") } } })
+  if (confirmDifferentSeed) AlertDialog(onDismissRequest = { confirmDifferentSeed = false }, title = { Text("Try a different seed?") }, text = { Text("This starts one manual generation with a fresh random seed. The current result remains visible until the new result succeeds.") }, confirmButton = { Button({ confirmDifferentSeed = false; viewModel.regenerateWithDifferentSeed() }) { Text("Generate") } }, dismissButton = { OutlinedButton({ confirmDifferentSeed = false }) { Text("Cancel") } })
+}
+
+@Composable private fun Lock(label: String, checked: Boolean, change: (Boolean) -> Unit) { Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(checked, change); Text(label) } }
+
+@Composable private fun FigureAttributeField(label: String, value: String, change: (String) -> Unit) {
+  OutlinedTextField(value, change, Modifier.fillMaxWidth(), label = { Text(label) }, singleLine = true)
 }
 
 @Composable private fun FluxFullscreenViewer(bitmap: android.graphics.Bitmap, onClose: () -> Unit) {

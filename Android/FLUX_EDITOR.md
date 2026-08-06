@@ -568,3 +568,182 @@ A successful prompt-influence comparison proves only that different prompts prop
 ### Non-changes
 
 Phase 2J keeps resolution at 256×256, keeps FLUX denoising at four steps, keeps GPU FP32 mandatory, does not implement TPU/NPU/CPU/cloud fallback, does not add 512×512 generation, does not add super-resolution or face restoration, and does not change model artifacts, tokenizer binaries, evidence binaries, FLUX manifest entries, immutable model revision, graph filenames, graph order, graph contracts, LiteRT precision, guidance scale, negative prompts, edit-strength scaling, or scheduler behavior.
+
+## Phase 2K — Arena-style single-prompt and Figure editing
+
+Phase 2K adopts the **interaction pattern** common to modern instruction editors: select one
+reference, give one instruction (or structured Figure Edit settings), compile one positive
+prompt locally, generate, compare, and optionally use the result as the next reference. This
+is a UX pattern only. It does not reproduce or claim access to Arena's proprietary routing,
+hidden prompts, cloud infrastructure, or model quality, and no image-quality parity with
+Arena, Gemini, or Seedream is claimed.
+
+### Production modes and local model boundary
+
+The two production modes are **Simple Edit** and **Figure Edit**. Advanced generation is a
+collapsed settings section, not a mode. Both use only the installed FLUX.2 Klein LiteRT
+image-edit artifacts. That graph accepts exactly one reference-image conditioning sequence,
+so a reference is mandatory, Generate is disabled without it, text-to-image and
+multi-reference conditioning are not supported, and no empty or second latent is invented.
+There is no cloud fallback and no CPU, TPU, or NPU path. Existing GPU FP32 enforcement,
+sequential graph lifetime, four-step denoising schedule, and native 256×256 decoder contract
+remain unchanged.
+
+Simple Edit trims only outer UI whitespace and deterministically compiles the literal UTF-8
+instruction into one positive prompt. It preserves identity and realistic anatomy by default,
+optionally preserves pose/composition (on) and background (off), and preserves other
+properties unless intent detection says they are being changed. It adds no negative prompt,
+Qwen wrapper, guidance scale, edit strength, or tensor control. The conditioner remains the
+sole owner of chat wrapping and body-only truncation.
+
+Figure Edit offers Preserve current, Apply preset, and Custom actions. Its outfit, pose,
+location/background, framing/camera, lighting, hairstyle, makeup/expression, and accessories
+locks all default on. Preserve current emits no body-change clause and locks the current
+silhouette. Preset/custom emits exactly one body-change clause plus realistic anatomy,
+minimum necessary garment-fit deformation, and a clear-face instruction preserving head
+position/orientation, expression, view, visibility, and lighting. FaceFusion is an external
+user workflow: it is neither implemented nor invoked here, and FLUX is never asked to create
+a new identity.
+
+Built-ins are Preserve reference, Balanced natural, Athletic balanced, Soft curvy, Tall
+proportioned, and Petite proportioned. Their editable fields cover overall build, shoulders,
+torso, waist, hips, legs, and height impression using neutral relationship-based prose. User
+copies contain descriptive configuration only and may be renamed, updated, persisted locally,
+and deleted; built-ins cannot be deleted. Presets cannot contain images, URIs, paths,
+embeddings, identity, history, credentials, or identifiers.
+
+### Compiler, conflicts, diagnostics
+
+Intent matching is case-insensitive and boundary-aware. Groups cover outfit/clothing,
+background/location, pose, camera/framing, lighting, hair, makeup/expression, and body/figure,
+including the documented common words and phrases. An enabled Simple lock is omitted when its
+property changes. In Figure Edit an additional instruction that changes a locked property is
+blocked before generation and lists the exact locks; the user must explicitly unlock them,
+edit the instruction, or cancel. Locks are never silently disabled and contradictory clauses
+are never silently sent.
+
+Prompt compilation is deterministic and local, performs no Unicode normalization or network
+call, rejects blank Simple and Custom text, and never logs or sanitizes the prompt into
+diagnostics. Safe diagnostics are scalar metadata only (mode, non-private built-in preset,
+lock names, seed, timing, dimensions, ownership, and truncation). Custom descriptions,
+instructions, URIs, paths, filenames, provider data, image/tensor bytes, cache details, and
+credentials are excluded.
+
+### Iteration, outputs, and ownership
+
+**Edit this result** encodes the completed 256×256 bitmap off the main thread to a temporary
+app-owned PNG and atomically renames it before activation. Provider-owned originals are never
+overwritten or deleted. A failed/cancelled stage removes partial files and preserves the old
+reference/output; replacing an owned iterative reference removes the obsolete owned file.
+The mode and explicit fixed-seed selection remain, while Random produces a fresh seed at the
+next run. **Use this figure for subsequent edits** additionally selects Preserve current so a
+previous figure preset is not accidentally applied twice.
+
+The local result view includes Before/After, local instruction, mode, non-private preset name,
+actual/copy/reuse seed, fullscreen zoom/pan with Reset/Close, save/share, and iterative actions.
+The 1024×1024 export is filtered resizing, not AI super-resolution.
+
+Natural-language preservation is not a geometric guarantee, precise body measurements are
+not guaranteed, and major figure changes may alter garment fit. No exact measurements or
+sexualized defaults are supplied.
+
+### Build separation and verification
+
+Figure Edit and its compiler are production code in debug and release. Phase 2J Prompt A/B
+comparison and any compiled-prompt developer preview remain `src/debug` only; release has no
+developer entry point, prompt preview, tokenizer/graph/tensor controls, or diagnostic hashes.
+Unit tests cover literal compilation, rejection, intent boundaries, contradiction avoidance,
+figure action exclusivity, lock defaults/conflicts, face compatibility wording, minimum fit,
+and neutral built-ins. APK compilation, lint, duplicate-class checks, debug/release assembly,
+and archive inspection remain required. Real generation, thermal cancellation, visual quality,
+and lifecycle behavior still require verification on a physical supported Pixel.
+
+### Phase 2K realism and anatomy correction
+
+The prompt compiler now places the requested edit/figure action immediately after the primary
+reference declaration, followed by enabled preservation, one invariant positive anatomy
+clause, only context-relevant framing/pose/hand/occlusion rules, clothing interaction, Figure
+face compatibility, exactly one realism profile, an optional additional instruction, and a
+short scope reminder. Literal user text is trimmed only at its UI edges, appears once, and is
+placed before generated boilerplate so the existing authoritative 512-token Qwen body-only
+truncation preserves its priority. Section values are deterministically deduplicated. The
+compiler does not normalize user Unicode or introduce a second wrapper.
+
+Advanced settings select Natural photo (default), Editorial photo, or Cinematic photo. Each
+maps to one concise photographic clause; inflated quality terms such as masterpiece, perfect,
+8K, or ultra-realistic are not added. The always-on anatomy invariant positively describes a
+single connected adult figure. Full-body/three-quarter, waist-up, and close-up framing select
+one appropriate visible-anatomy clause. Pose intent selects a general achievable-pose clause
+and at most one relevant specialization for sitting, standing, gait, raised arms, or leaning.
+Hands and limb-overlap clauses appear only when the typed visual context or literal instruction
+makes them relevant. Location changes receive a new-environment perspective clause instead of
+a contradictory original-background lock.
+
+Figure changes apply proportion adjustments coherently across the visible silhouette and
+skeletal connections. Preserve-current instead retains silhouette, relative proportions, and
+limb lengths and never emits a figure-change clause. Outfit locking describes plausible fabric
+drape, folds, seams, tension, coverage, occlusion, garment openings, and attached accessories.
+Every Figure prompt positively describes one coherent face and preserves head position,
+expression, view, visibility, and lighting for a later external identity-replacement workflow;
+turned and occluded face clauses are conditional. FaceFusion remains external and is not
+implemented or invoked.
+
+A debug-source-set-only `FluxPromptSectionReport` can carry section names, body-token count,
+truncation status, mode, framing/pose categories, realism profile, and lock names. Its type has
+no literal- or compiled-prompt field, and there is no release counterpart. Actual tokenization
+and body-only truncation remain exclusively in the authoritative tokenizer/conditioner.
+
+The result screen adds two explicit manual actions. **Regenerate with same settings** reuses
+the last reference and compiled settings; Fixed retains the selected signed 64-bit seed while
+Random naturally obtains fresh production noise. **Try a different seed** requires confirmation,
+selects Random, then starts one generation. There is no anatomy detector, quality scorer,
+automatic retry, extra graph input, or extra denoising step. In either action the previous
+bitmap remains until another generation succeeds.
+
+These positive instructions can reduce common structural errors but cannot guarantee perfect
+hands, faces, limbs, identity preservation, anatomy, or photographic realism. Physical Pixel
+verification remains required.
+
+### Phase 2K corrective hardening
+
+Prompt compilation now uses a deterministic `FluxPromptBudgetPlanner`. Production compilation
+loads the installed authoritative Qwen vocabulary, merges, and special-token data and counts
+body tokens without adding a wrapper; `FluxPromptConditioner` remains the only wrapper owner.
+The maximum body width is derived from the existing 512-token contract after its unchanged
+prefix/suffix reservation. Literal edit/action sections are admitted first, generated sections
+are deduplicated and admitted in semantic priority order, and irrelevant lower-priority
+boilerplate is omitted before literal text is code-point-truncated as a last resort. Planning
+returns counts, limits, truncation, included section names, and omitted generated section names;
+only the debug source-set report can represent that scalar metadata and it has no prompt field.
+
+Figure controls now expose seven separate descriptive attributes and separately populate each
+field from built-in or user presets. Saving a built-in selection creates a user-owned copy;
+only a selected user preset can be updated or deleted. A conservative Framing and visibility
+section defaults to unspecified with all switches off and explicitly states that no automatic
+body detector runs. Its framing, visible-hands, overlapping-limbs, turned-face, and occluded-face
+values are passed as typed visual context in addition to keyword detection.
+
+Outfit and accessories are distinct intents. Clothing terms conflict only with the outfit lock;
+jewelry, necklace, earrings, bracelet, watch, belt, bags, glasses, sunglasses, and hat terms
+conflict only with the accessories lock.
+
+Cancellation and all handled generation failures copy the last successful state, preserving the
+bitmap, seed selection/text/actual seed, mode, visible instruction, preset name, iterative URI,
+and valid saved URI while clearing only transient progress. A prior bitmap is recycled only
+after a newly successful bitmap has entered state. Iterative deletion accepts only this app's
+FileProvider authority and exact `flux_iterative/reference_*.png` URI shape, canonicalizes the
+target, verifies its canonical parent, and deletes an obsolete owned file only after replacement
+finalization succeeds. Provider-owned sources are never deleted. `onCleared` cancels active work
+and deletes only the current app-owned iterative reference; configuration changes retain the
+ViewModel and therefore retain that reference.
+
+### Phase 2K compilation dispatch correction
+
+Authoritative tokenizer asset resolution, tokenizer loading/parsing, BPE body-token counting,
+and prompt-budget planning now execute through an injected compilation runner on
+`Dispatchers.Default`, while the repository model-file lock remains held around authoritative
+asset access. The immutable compiled result returns to the ViewModel's main coroutine before
+conflict UI state is updated or generation is launched. A single-flight gate rejects repeated
+taps, the production screen disables Generate and exposes cancellable Preparing prompt status,
+and cancellation cannot launch generation. Sanitized compilation failure updates only safe
+state and preserves the last successful result; prompt text is neither logged nor diagnosed.

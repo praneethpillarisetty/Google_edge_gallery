@@ -34,6 +34,6 @@ class FluxPhase2gBoundaryTest {
     assertTrue(phase.contains("kv_vae.tflite"))
     assertFalse(phase.contains("Accelerator.CPU")); assertFalse(phase.contains("FP16"))
     assertFalse(phase.contains("cloud", ignoreCase = true)); assertFalse(phase.contains("Accelerator.NPU"))
-    assertTrue(editor.contains("viewModel.generate(imageUri, prompt)"))
+    assertTrue(editor.contains("viewModel.compileSimpleAndGenerate(imageUri"))
   }
 }
