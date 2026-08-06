@@ -62,6 +62,7 @@ import kotlinx.coroutines.launch
 fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
   val state by viewModel.uiState.collectAsState()
   val generation by viewModel.generationState.collectAsState()
+  val compilation by viewModel.compilationState.collectAsState()
   val userPresets by viewModel.userPresets.collectAsState()
   var imageUri by remember { mutableStateOf<Uri?>(generation.iterativeReference) }
   var originalUri by remember { mutableStateOf<Uri?>(null) }
@@ -100,14 +101,11 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
   fun figureRequest() = FluxFigureEditRequest(if (figureAction is FluxFigureAction.Custom) FluxFigureAction.Custom(attributes().description()) else figureAction, attributes().description(), preserveOutfit, preservePose, preserveBackground, preserveCamera, preserveLighting, preserveHair, preserveMakeup, preserveAccessories, instruction, realismProfile,
     FluxEditVisualContext(framing, handsVisible, limbsOverlap, faceTurned, faceOccluded))
   fun runGeneration(unlock: Boolean = false) {
-    scope.launch { runCatching {
-      if (mode == FluxEditMode.SIMPLE) {
-        val compiled = viewModel.compile(FluxSimpleEditRequest(instruction, preserveIdentity, preservePoseSimple, preserveBackgroundSimple, realismProfile))
-        viewModel.generate(imageUri, compiled.positivePrompt, mode, instruction)
-      } else {
-        var request = figureRequest(); val compiled = viewModel.compile(request, attributes().description())
-        if (compiled.conflicts.isNotEmpty() && !unlock) { conflicts = compiled.conflicts.map { it.lockName }; return@launch }
-        if (unlock) request = request.copy(
+    if (mode == FluxEditMode.SIMPLE) {
+      viewModel.compileSimpleAndGenerate(imageUri, FluxSimpleEditRequest(instruction, preserveIdentity, preservePoseSimple, preserveBackgroundSimple, realismProfile), instruction)
+    } else {
+      var request = figureRequest()
+      if (unlock) request = request.copy(
           preserveOutfit = preserveOutfit && "outfit" !in conflicts,
           preservePose = preservePose && "pose and hand placement" !in conflicts,
           preserveBackground = preserveBackground && "location and background" !in conflicts,
@@ -116,11 +114,10 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
           preserveHair = preserveHair && "hairstyle" !in conflicts,
           preserveMakeupAndExpression = preserveMakeup && "makeup and expression" !in conflicts,
           preserveAccessories = preserveAccessories && "accessories" !in conflicts)
-        val resolved = viewModel.compile(request, attributes().description())
-        viewModel.generate(imageUri, resolved.positivePrompt, mode, instruction, FluxBuiltInFigurePresets.all.getOrNull(presetIndex)?.name)
-        conflicts = emptyList()
-      }
-    }.onFailure { viewModel.outputError(it.message ?: "The edit instruction is invalid.") } }
+      if (unlock) conflicts = emptyList()
+      viewModel.compileFigureAndGenerate(imageUri, request, attributes().description(), instruction,
+        FluxBuiltInFigurePresets.all.getOrNull(presetIndex)?.name) { conflicts = it }
+    }
   }
   Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
     Text("Local FLUX image editor")
@@ -196,7 +193,9 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
       Text("These options are prompt instructions, not guaranteed numerical controls.")
     }
     generation.actualSeed?.let { seed -> Row { Text("Actual seed used: $seed"); OutlinedButton({ context.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText("FLUX seed", seed.toString())) }) { Text("Copy seed") }; OutlinedButton({ viewModel.setSeedMode(FluxSeedSelection.Fixed(seed)); viewModel.setFixedSeedText(seed.toString()) }) { Text("Use same seed again") } } }
-    Button({ runGeneration() }, enabled = viewModel.canGenerate(imageUri, if (mode == FluxEditMode.SIMPLE) instruction else "figure edit"), modifier = Modifier.fillMaxWidth()) { Text("Generate") }
+    Button({ runGeneration() }, enabled = compilation !is FluxPromptCompilationState.Compiling && viewModel.canGenerate(imageUri, if (mode == FluxEditMode.SIMPLE) instruction else "figure edit"), modifier = Modifier.fillMaxWidth()) { Text("Generate") }
+    if (compilation is FluxPromptCompilationState.Compiling) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Preparing prompt…"); OutlinedButton(viewModel::cancelGeneration) { Text("Cancel") } }
+    if (compilation is FluxPromptCompilationState.Error) Text((compilation as FluxPromptCompilationState.Error).message)
     if (generation.running) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("${generation.stage}: step ${generation.currentStep}/4 — ${generation.elapsedMillis} ms"); OutlinedButton(viewModel::cancelGeneration) { Text("Cancel") } }
     generation.sanitizedError?.let { Text(it) }
     generation.finalBitmap?.let { bitmap ->

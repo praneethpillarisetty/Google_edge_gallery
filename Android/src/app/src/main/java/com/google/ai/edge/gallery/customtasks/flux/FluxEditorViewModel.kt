@@ -33,6 +33,27 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.ensureActive
+import java.util.concurrent.atomic.AtomicBoolean
+
+sealed interface FluxPromptCompilationState {
+  data object Idle : FluxPromptCompilationState
+  data object Compiling : FluxPromptCompilationState
+  data class Error(val message: String) : FluxPromptCompilationState
+}
+
+internal class FluxPromptCompilationRunner(private val dispatcher: CoroutineDispatcher) {
+  suspend fun <T> run(block: () -> T): T = withContext(dispatcher) { block() }
+}
+
+internal class FluxCompilationGate {
+  private val active = AtomicBoolean(false)
+  fun tryStart(): Boolean = active.compareAndSet(false, true)
+  fun finish() { active.set(false) }
+}
 
 data class FluxProductionGenerationState(
   val running: Boolean = false,
@@ -101,6 +122,11 @@ class FluxEditorViewModel @Inject constructor(
   private val mutableGenerationState = MutableStateFlow(FluxProductionGenerationState())
   val generationState = mutableGenerationState.asStateFlow()
   private var generationJob: Job? = null
+  private var compilationJob: Job? = null
+  private val compilationRunner = FluxPromptCompilationRunner(Dispatchers.Default)
+  private val compilationGate = FluxCompilationGate()
+  private val mutableCompilationState = MutableStateFlow<FluxPromptCompilationState>(FluxPromptCompilationState.Idle)
+  val compilationState = mutableCompilationState.asStateFlow()
   private data class LastGeneration(val reference: Uri, val prompt: String, val mode: FluxEditMode, val instruction: String, val presetName: String?)
   private var lastGeneration: LastGeneration? = null
   private val mutableUserPresets = MutableStateFlow<List<FluxFigurePreset>>(emptyList())
@@ -132,13 +158,50 @@ class FluxEditorViewModel @Inject constructor(
     generationJob?.isActive == true, powerManager.currentThermalStatus,
   )
 
-  suspend fun compile(request: FluxSimpleEditRequest): FluxCompiledPrompt = withAuthoritativeCompiler { it.compile(request) }
-  suspend fun compile(request: FluxFigureEditRequest, presetDescription: String?): FluxCompiledPrompt = withAuthoritativeCompiler { it.compile(request, presetDescription) }
+  fun compileSimpleAndGenerate(reference: Uri?, request: FluxSimpleEditRequest, visibleInstruction: String) {
+    startCompilation {
+      val compiled = withAuthoritativeCompiler { it.compile(request) }
+      kotlinx.coroutines.currentCoroutineContext().ensureActive()
+      generate(reference, compiled.positivePrompt, FluxEditMode.SIMPLE, visibleInstruction)
+    }
+  }
+
+  fun compileFigureAndGenerate(
+    reference: Uri?, request: FluxFigureEditRequest, presetDescription: String?,
+    visibleInstruction: String, presetName: String?, onConflicts: (List<String>) -> Unit,
+  ) {
+    startCompilation {
+      val compiled = withAuthoritativeCompiler { it.compile(request, presetDescription) }
+      kotlinx.coroutines.currentCoroutineContext().ensureActive()
+      if (compiled.conflicts.isNotEmpty()) onConflicts(compiled.conflicts.map { it.lockName })
+      else generate(reference, compiled.positivePrompt, FluxEditMode.FIGURE, visibleInstruction, presetName)
+    }
+  }
+
+  private fun startCompilation(block: suspend () -> Unit) {
+    if (generationJob?.isActive == true || !compilationGate.tryStart()) return
+    compilationJob = viewModelScope.launch {
+      mutableCompilationState.value = FluxPromptCompilationState.Compiling
+      try {
+        block()
+        mutableCompilationState.value = FluxPromptCompilationState.Idle
+      } catch (_: CancellationException) {
+        mutableCompilationState.value = FluxPromptCompilationState.Idle
+      } catch (_: Throwable) {
+        val safe = "The edit instruction could not be prepared."
+        mutableCompilationState.value = FluxPromptCompilationState.Error(safe)
+        mutableGenerationState.value = mutableGenerationState.value.copy(sanitizedError = safe)
+      } finally {
+        compilationGate.finish()
+      }
+    }
+  }
 
   private suspend fun <T> withAuthoritativeCompiler(block: (FluxEditPromptCompiler) -> T): T =
-    repository.withModelFilesLocked { root, manifest, _ ->
+    repository.withModelFilesLocked { root, manifest, _ -> compilationRunner.run {
       val assets = FluxPromptAssetResolver(root, manifest).resolve()
       block(FluxEditPromptCompiler(FluxAuthoritativeBodyTokenCounter.create(assets), FluxAuthoritativeBodyTokenCounter.maximumBodyTokens))
+    }
     }
 
   fun savePreset(preset: FluxFigurePreset) { viewModelScope.launch { presetRepository.save(preset); mutableUserPresets.value = presetRepository.userPresets() } }
@@ -215,11 +278,12 @@ class FluxEditorViewModel @Inject constructor(
     }
   }
 
-  fun cancelGeneration() { generationJob?.cancel() }
+  fun cancelGeneration() { compilationJob?.cancel(); generationJob?.cancel() }
   fun saved(uri: Uri) { mutableGenerationState.value = mutableGenerationState.value.copy(savedOutputUri = uri, sanitizedError = null) }
   fun outputError(message: String) { mutableGenerationState.value = mutableGenerationState.value.copy(sanitizedError = message) }
   override fun onCleared() {
     generationJob?.cancel()
+    compilationJob?.cancel()
     mutableGenerationState.value.iterativeReference?.let(iterativeStore::deleteOwned)
     super.onCleared()
   }

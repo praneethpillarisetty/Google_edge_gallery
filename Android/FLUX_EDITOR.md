@@ -736,3 +736,14 @@ target, verifies its canonical parent, and deletes an obsolete owned file only a
 finalization succeeds. Provider-owned sources are never deleted. `onCleared` cancels active work
 and deletes only the current app-owned iterative reference; configuration changes retain the
 ViewModel and therefore retain that reference.
+
+### Phase 2K compilation dispatch correction
+
+Authoritative tokenizer asset resolution, tokenizer loading/parsing, BPE body-token counting,
+and prompt-budget planning now execute through an injected compilation runner on
+`Dispatchers.Default`, while the repository model-file lock remains held around authoritative
+asset access. The immutable compiled result returns to the ViewModel's main coroutine before
+conflict UI state is updated or generation is launched. A single-flight gate rejects repeated
+taps, the production screen disables Generate and exposes cancellable Preparing prompt status,
+and cancellation cannot launch generation. Sanitized compilation failure updates only safe
+state and preserves the last successful result; prompt text is neither logged nor diagnosed.
