@@ -119,7 +119,9 @@ class FluxEditPromptCompilerTest {
 
   @Test fun presetsRemainNeutralAndMeasurementFree() {
     assertEquals(6, FluxBuiltInFigurePresets.all.size)
-    assertTrue(FluxBuiltInFigurePresets.all.all { it.builtIn && it.attributes.description().isNotBlank() })
+    assertTrue(FluxBuiltInFigurePresets.all.all { it.builtIn })
+    assertTrue(FluxBuiltInFigurePresets.all.single { it.id == "builtin.preserve" }.attributes.description().isBlank())
+    assertTrue(FluxBuiltInFigurePresets.all.filterNot { it.id == "builtin.preserve" }.all { it.attributes.description().isNotBlank() })
     assertTrue(FluxBuiltInFigurePresets.all.none { Regex("\\d+-\\d+-\\d+").containsMatchIn(it.attributes.description()) })
   }
 }

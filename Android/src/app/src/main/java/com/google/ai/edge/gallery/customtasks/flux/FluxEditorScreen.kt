@@ -53,6 +53,7 @@ import com.google.ai.edge.gallery.customtasks.flux.generation.FluxSimpleEditRequ
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxBuiltInFigurePresets
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxFigureAttributes
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxFigurePreset
+import com.google.ai.edge.gallery.customtasks.flux.generation.selectBuiltInFigurePreset
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxRealismProfile
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxEditVisualContext
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxFramingCategory
@@ -63,6 +64,7 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
   val state by viewModel.uiState.collectAsState()
   val generation by viewModel.generationState.collectAsState()
   val compilation by viewModel.compilationState.collectAsState()
+  val figureSummary by viewModel.figureSummary.collectAsState()
   val userPresets by viewModel.userPresets.collectAsState()
   var imageUri by remember { mutableStateOf<Uri?>(generation.iterativeReference) }
   var originalUri by remember { mutableStateOf<Uri?>(null) }
@@ -72,7 +74,9 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
   var realismProfile by remember { mutableStateOf(FluxRealismProfile.NATURAL_PHOTO) }
   var preserveIdentity by remember { mutableStateOf(true) }; var preservePoseSimple by remember { mutableStateOf(true) }; var preserveBackgroundSimple by remember { mutableStateOf(false) }
   var figureAction by remember { mutableStateOf<FluxFigureAction>(FluxFigureAction.PreserveCurrent) }
-  var presetIndex by remember { mutableStateOf(1) }
+  var presetIndex by remember { mutableStateOf(0) }
+  var selectedPresetId by remember { mutableStateOf(FluxBuiltInFigurePresets.all[0].id) }
+  var selectedPresetName by remember { mutableStateOf(FluxBuiltInFigurePresets.all[0].name) }
   val initialAttributes = FluxBuiltInFigurePresets.all[presetIndex].attributes
   var overallBuild by remember { mutableStateOf(initialAttributes.overallBuild) }; var shoulders by remember { mutableStateOf(initialAttributes.shoulders) }
   var torso by remember { mutableStateOf(initialAttributes.torso) }; var waist by remember { mutableStateOf(initialAttributes.waist) }
@@ -98,6 +102,12 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
   }
   fun attributes() = FluxFigureAttributes(overallBuild, shoulders, torso, waist, hips, legs, heightImpression)
   fun loadAttributes(value: FluxFigureAttributes) { overallBuild = value.overallBuild; shoulders = value.shoulders; torso = value.torso; waist = value.waist; hips = value.hips; legs = value.legs; heightImpression = value.heightImpression }
+  fun selectPreset(index: Int) {
+    presetIndex = index.coerceIn(0, FluxBuiltInFigurePresets.all.lastIndex)
+    val selection = selectBuiltInFigurePreset(FluxBuiltInFigurePresets.all[presetIndex])
+    selectedPresetId = selection.presetId; selectedPresetName = selection.presetName
+    loadAttributes(selection.attributes); figureAction = selection.action; selectedUserPresetId = null
+  }
   fun figureRequest() = FluxFigureEditRequest(if (figureAction is FluxFigureAction.Custom) FluxFigureAction.Custom(attributes().description()) else figureAction, attributes().description(), preserveOutfit, preservePose, preserveBackground, preserveCamera, preserveLighting, preserveHair, preserveMakeup, preserveAccessories, instruction, realismProfile,
     FluxEditVisualContext(framing, handsVisible, limbsOverlap, faceTurned, faceOccluded))
   fun runGeneration(unlock: Boolean = false) {
@@ -116,7 +126,7 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
           preserveAccessories = preserveAccessories && "accessories" !in conflicts)
       if (unlock) conflicts = emptyList()
       viewModel.compileFigureAndGenerate(imageUri, request, attributes().description(), instruction,
-        FluxBuiltInFigurePresets.all.getOrNull(presetIndex)?.name) { conflicts = it }
+        selectedPresetName, listOf(overallBuild, shoulders, torso, waist, hips, legs, heightImpression).count { it.isNotBlank() }) { conflicts = it }
     }
   }
   Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -144,14 +154,14 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
     else {
       Text("Figure action")
       Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        OutlinedButton({ figureAction = FluxFigureAction.PreserveCurrent }) { Text("Preserve current") }
-        OutlinedButton({ figureAction = FluxFigureAction.ApplyPreset(FluxBuiltInFigurePresets.all[presetIndex].id) }) { Text("Apply preset") }
+        OutlinedButton({ selectPreset(0) }) { Text("Preserve current") }
+        OutlinedButton({ figureAction = FluxFigureAction.ApplyPreset(selectedPresetId) }, enabled = selectedPresetId != "builtin.preserve") { Text("Apply preset") }
         OutlinedButton({ figureAction = FluxFigureAction.Custom(attributes().description()) }) { Text("Custom") }
       }
-      Text("Figure preset: ${FluxBuiltInFigurePresets.all[presetIndex].name}")
+      Text("Figure preset: $selectedPresetName")
       Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        OutlinedButton({ presetIndex = (presetIndex - 1).coerceAtLeast(0); loadAttributes(FluxBuiltInFigurePresets.all[presetIndex].attributes); figureAction = FluxFigureAction.ApplyPreset(FluxBuiltInFigurePresets.all[presetIndex].id); selectedUserPresetId = null }) { Text("Previous") }
-        OutlinedButton({ presetIndex = (presetIndex + 1).coerceAtMost(FluxBuiltInFigurePresets.all.lastIndex); loadAttributes(FluxBuiltInFigurePresets.all[presetIndex].attributes); figureAction = FluxFigureAction.ApplyPreset(FluxBuiltInFigurePresets.all[presetIndex].id); selectedUserPresetId = null }) { Text("Next") }
+        OutlinedButton({ selectPreset(presetIndex - 1) }) { Text("Previous") }
+        OutlinedButton({ selectPreset(presetIndex + 1) }) { Text("Next") }
       }
       FigureAttributeField("Overall build", overallBuild) { overallBuild = it }; FigureAttributeField("Shoulder proportions", shoulders) { shoulders = it }
       FigureAttributeField("Torso proportions", torso) { torso = it }; FigureAttributeField("Waist definition", waist) { waist = it }
@@ -171,6 +181,8 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
       Lock("Hands are clearly visible", handsVisible) { handsVisible = it }; Lock("Limbs cross or overlap", limbsOverlap) { limbsOverlap = it }
       Lock("Face is turned", faceTurned) { faceTurned = it }; Lock("Face is partially occluded", faceOccluded) { faceOccluded = it }
       Text("These controls describe visible reference-image structure. They do not run an automatic body detector.")
+      Text("Visibility warning: body regions outside the square reference crop cannot be edited. For presets affecting hips or legs, use a full-body square or portrait reference.")
+      if (framing == FluxFramingCategory.CLOSE_UP || framing == FluxFramingCategory.WAIST_UP) Text("The selected framing is unlikely to show hips and visible upper legs; those requested changes may not be visible.")
       Text("Preservation locks")
       Lock("Preserve outfit", preserveOutfit) { preserveOutfit = it }; Lock("Preserve pose", preservePose) { preservePose = it }; Lock("Preserve location/background", preserveBackground) { preserveBackground = it }; Lock("Preserve framing/camera", preserveCamera) { preserveCamera = it }
       Lock("Preserve lighting", preserveLighting) { preserveLighting = it }; Lock("Preserve hairstyle", preserveHair) { preserveHair = it }; Lock("Preserve makeup/expression", preserveMakeup) { preserveMakeup = it }; Lock("Preserve accessories", preserveAccessories) { preserveAccessories = it }
@@ -193,6 +205,10 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
       Text("These options are prompt instructions, not guaranteed numerical controls.")
     }
     generation.actualSeed?.let { seed -> Row { Text("Actual seed used: $seed"); OutlinedButton({ context.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText("FLUX seed", seed.toString())) }) { Text("Copy seed") }; OutlinedButton({ viewModel.setSeedMode(FluxSeedSelection.Fixed(seed)); viewModel.setFixedSeedText(seed.toString()) }) { Text("Use same seed again") } } }
+    if (mode == FluxEditMode.FIGURE) figureSummary?.let { summary ->
+      Text("Pre-generation summary")
+      Text("Figure action: ${summary.action}; selected preset: ${summary.presetName}; non-empty attributes: ${summary.nonEmptyAttributeCount}; framing: ${summary.framingCategory}; figure_action included: ${summary.figureActionIncluded}; truncated or omitted: ${summary.figureActionTruncatedOrOmitted}")
+    }
     Button({ runGeneration() }, enabled = compilation !is FluxPromptCompilationState.Compiling && viewModel.canGenerate(imageUri, if (mode == FluxEditMode.SIMPLE) instruction else "figure edit"), modifier = Modifier.fillMaxWidth()) { Text("Generate") }
     if (compilation is FluxPromptCompilationState.Compiling) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Preparing prompt…"); OutlinedButton(viewModel::cancelGeneration) { Text("Cancel") } }
     if (compilation is FluxPromptCompilationState.Error) Text((compilation as FluxPromptCompilationState.Error).message)
@@ -212,7 +228,9 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
       OutlinedButton({ confirmDifferentSeed = true }, enabled = !generation.running) { Text("Try a different seed") }
       if (viewerOpen) FluxFullscreenViewer(bitmap) { viewerOpen = false }
     }
-    FluxDeveloperVerificationSection(state is FluxEditorUiState.Ready, imageUri, instruction)
+    FluxDeveloperVerificationSection(state is FluxEditorUiState.Ready, imageUri, instruction,
+      if (mode == FluxEditMode.FIGURE) figureRequest() else null,
+      FluxBuiltInFigurePresets.byId(selectedPresetId))
   }
   if (conflicts.isNotEmpty()) AlertDialog(onDismissRequest = { conflicts = emptyList() }, title = { Text("Instruction conflicts with locks") }, text = { Text(conflicts.joinToString("\n")) }, confirmButton = { Button({ runGeneration(true) }) { Text("Unlock conflicting properties") } }, dismissButton = { Row { OutlinedButton({ conflicts = emptyList() }) { Text("Edit instruction") }; OutlinedButton({ conflicts = emptyList() }) { Text("Cancel") } } })
   if (confirmDifferentSeed) AlertDialog(onDismissRequest = { confirmDifferentSeed = false }, title = { Text("Try a different seed?") }, text = { Text("This starts one manual generation with a fresh random seed. The current result remains visible until the new result succeeds.") }, confirmButton = { Button({ confirmDifferentSeed = false; viewModel.regenerateWithDifferentSeed() }) { Text("Generate") } }, dismissButton = { OutlinedButton({ confirmDifferentSeed = false }) { Text("Cancel") } })

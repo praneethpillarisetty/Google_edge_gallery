@@ -26,12 +26,16 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxFigureEditRequest
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxFigurePreset
 
 @Composable
 internal fun FluxDeveloperVerificationSection(
   modelReady: Boolean,
   referenceUri: Uri?,
   editorPrompt: String,
+  figureRequest: FluxFigureEditRequest?,
+  figurePreset: FluxFigurePreset?,
   viewModel: FluxVerificationViewModel = hiltViewModel(),
 ) {
   val state by viewModel.state.collectAsState()
@@ -62,9 +66,29 @@ internal fun FluxDeveloperVerificationSection(
     }
 
     FluxPromptInfluenceComparisonSection(modelReady, referenceUri)
+    FluxFigurePresetInfluenceSection(modelReady, referenceUri, figureRequest, figurePreset)
     FluxReferenceVaeVerificationSection(modelReady, referenceUri)
     FluxTransformerPrepVerificationSection(modelReady, referenceUri, editorPrompt)
     FluxTransformerDenoisingVerificationSection(modelReady, referenceUri, editorPrompt)
+  }
+}
+
+@Composable
+private fun FluxFigurePresetInfluenceSection(modelReady: Boolean, referenceUri: Uri?, request: FluxFigureEditRequest?, preset: FluxFigurePreset?, viewModel: FluxPromptInfluenceComparisonViewModel = hiltViewModel(key = "figure-preset-comparison")) {
+  val state by viewModel.state.collectAsState()
+  var seed by remember { mutableStateOf("1234") }
+  val eligible = preset?.builtIn == true && preset.id != "builtin.preserve" && request != null
+  Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+    Text("Developer verification — Figure preset influence")
+    Text("Runs PreserveCurrent and the selected built-in preset with the same reference, fixed seed, locks, framing, realism, scheduler and graph sequence. Output is sanitized; visual inspection remains required.")
+    OutlinedTextField(seed, { seed = it }, label = { Text("Fixed seed (signed 64-bit)") }, enabled = !state.running, modifier = Modifier.fillMaxWidth())
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      Button({ if (request != null && preset != null) viewModel.runFigure(referenceUri, request, preset, seed, modelReady) }, enabled = eligible && modelReady && referenceUri != null && seed.isNotBlank() && !state.running) { Text("Verify figure preset influence") }
+      OutlinedButton(viewModel::cancel, enabled = state.running) { Text("Cancel") }
+    }
+    if (state.running) LinearProgressIndicator(Modifier.fillMaxWidth())
+    state.error?.let { Text(it) }
+    if (state.summary.isNotEmpty()) OutlinedTextField(state.summary, {}, readOnly = true, label = { Text("Sanitized figure A/B diagnostic") }, modifier = Modifier.fillMaxWidth())
   }
 }
 
