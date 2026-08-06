@@ -2,7 +2,10 @@
 package com.google.ai.edge.gallery.customtasks.flux.generation
 
 /** Deterministic local compiler. FluxPromptConditioner remains the sole Qwen-wrapper owner. */
-class FluxEditPromptCompiler {
+class FluxEditPromptCompiler(
+  private val tokenCounter: FluxBodyTokenCounter = FluxUtf8UpperBoundTokenCounter,
+  private val maximumBodyTokens: Int = 500,
+) {
   fun compile(request: FluxSimpleEditRequest): FluxCompiledPrompt {
     val instruction = request.userInstruction.trim()
     require(instruction.isNotEmpty()) { "Describe the requested edit." }
@@ -12,13 +15,13 @@ class FluxEditPromptCompiler {
     val sections = linkedMapOf<String, String>()
     sections["reference"] = "Use the reference image as the primary visual source."
     sections["requested_edit"] = "Requested edit:\n$instruction"
-    preservation(intents, request).takeIf(String::isNotEmpty)?.let { sections["preservation"] = it }
     sections["anatomy_invariant"] = ANATOMY_INVARIANT
     conditionalRules(instruction, framing, pose, request.visualContext).forEach { (name, clause) -> sections[name] = clause }
+    preservation(intents, request).takeIf(String::isNotEmpty)?.let { sections["preservation"] = it }
     sceneClause(intents, request.preserveBackground, request.preservePoseAndComposition)?.let { sections["scene_perspective"] = it }
     sections["realism"] = realism(request.realismProfile)
     sections["scope"] = "Apply only the requested changes and preserve every property not explicitly changed."
-    return result(sections, intents, framing, pose)
+    return result(sections, setOf("requested_edit"), intents, framing, pose)
   }
 
   fun compile(request: FluxFigureEditRequest, presetDescription: String? = null): FluxCompiledPrompt {
@@ -33,9 +36,9 @@ class FluxEditPromptCompiler {
     val sections = linkedMapOf<String, String>()
     sections["reference"] = "Use the reference image as the primary visual source."
     sections["figure_action"] = figureAction(request, presetDescription)
-    enabledPreservation(request).takeIf(String::isNotEmpty)?.let { sections["preservation"] = it }
     sections["anatomy_invariant"] = ANATOMY_INVARIANT
     conditionalRules(intentText, framing, pose, request.visualContext).forEach { (name, clause) -> sections[name] = clause }
+    enabledPreservation(request).takeIf(String::isNotEmpty)?.let { sections["preservation"] = it }
     sceneClause(intents, request.preserveBackground, request.preserveCamera)?.let { sections["scene_perspective"] = it }
     if (request.preserveOutfit) sections["clothing_body"] = CLOTHING_BODY
     sections["face_coherence"] = FACE_COHERENCE
@@ -44,12 +47,13 @@ class FluxEditPromptCompiler {
     sections["realism"] = realism(request.realismProfile)
     additional?.let { sections["additional_instruction"] = "Additional instruction:\n$it" }
     sections["scope"] = "Do not redesign or relocate any locked property; make only the selected figure adjustment and explicit additional changes."
-    return result(sections, intents, framing, pose, conflicts)
+    return result(sections, setOf("figure_action", "additional_instruction"), intents, framing, pose, conflicts)
   }
 
-  private fun result(sections: LinkedHashMap<String, String>, intents: Set<FluxPromptIntent>, framing: FluxFramingCategory, pose: FluxPoseCategory, conflicts: List<FluxPromptConflict> = emptyList()): FluxCompiledPrompt {
-    val deduplicated = sections.entries.distinctBy { it.value }.associateTo(linkedMapOf()) { it.toPair() }
-    return FluxCompiledPrompt(deduplicated.values.joinToString("\n\n"), intents, conflicts, deduplicated.keys, framing, pose)
+  private fun result(sections: LinkedHashMap<String, String>, literalSections: Set<String>, intents: Set<FluxPromptIntent>, framing: FluxFramingCategory, pose: FluxPoseCategory, conflicts: List<FluxPromptConflict> = emptyList()): FluxCompiledPrompt {
+    val plan = FluxPromptBudgetPlanner(tokenCounter, maximumBodyTokens).plan(sections, literalSections.filterTo(linkedSetOf()) { it in sections })
+    return FluxCompiledPrompt(plan.text, intents, conflicts, plan.includedSectionNames, framing, pose,
+      plan.bodyTokenCount, plan.maximumBodyTokens, plan.truncationOccurred, plan.omittedGeneratedSectionNames)
   }
 
   private fun preservation(intents: Set<FluxPromptIntent>, r: FluxSimpleEditRequest): String = buildList {
@@ -118,7 +122,7 @@ class FluxEditPromptCompiler {
     Triple(FluxPromptIntent.OUTFIT, "outfit", r.preserveOutfit), Triple(FluxPromptIntent.POSE, "pose and hand placement", r.preservePose),
     Triple(FluxPromptIntent.BACKGROUND, "location and background", r.preserveBackground), Triple(FluxPromptIntent.CAMERA, "framing and camera", r.preserveCamera),
     Triple(FluxPromptIntent.LIGHTING, "lighting and shadows", r.preserveLighting), Triple(FluxPromptIntent.HAIR, "hairstyle", r.preserveHair),
-    Triple(FluxPromptIntent.MAKEUP_EXPRESSION, "makeup and expression", r.preserveMakeupAndExpression), Triple(FluxPromptIntent.OUTFIT, "accessories", r.preserveAccessories),
+    Triple(FluxPromptIntent.MAKEUP_EXPRESSION, "makeup and expression", r.preserveMakeupAndExpression), Triple(FluxPromptIntent.ACCESSORIES, "accessories", r.preserveAccessories),
   )
 
   companion object {
@@ -150,7 +154,8 @@ class FluxEditPromptCompiler {
 
 object FluxPromptIntentDetector {
   private val terms = mapOf(
-    FluxPromptIntent.OUTFIT to listOf("outfit", "clothing", "clothes", "dress", "gown", "suit", "shirt", "top", "pants", "skirt", "coat", "jacket", "saree", "sari", "lehenga", "uniform", "costume", "wear", "wearing", "accessories"),
+    FluxPromptIntent.OUTFIT to listOf("outfit", "clothing", "clothes", "dress", "gown", "suit", "shirt", "top", "pants", "skirt", "coat", "jacket", "saree", "sari", "lehenga", "uniform", "costume", "wear", "wearing"),
+    FluxPromptIntent.ACCESSORIES to listOf("accessory", "accessories", "jewelry", "jewellery", "necklace", "earrings", "bracelet", "watch", "belt", "bag", "handbag", "glasses", "sunglasses", "hat"),
     FluxPromptIntent.BACKGROUND to listOf("background", "location", "setting", "scene", "beach", "mountain", "city", "street", "room", "studio", "forest", "park", "office", "indoor", "outdoor", "move to", "place in"),
     FluxPromptIntent.POSE to listOf("pose", "standing", "sitting", "walking", "running", "kneeling", "leaning", "arms", "hands", "holding", "touching", "waving", "raised arms", "turn", "facing", "posture"),
     FluxPromptIntent.CAMERA to listOf("camera", "angle", "framing", "crop", "close-up", "waist-up", "full-body", "three-quarter", "portrait", "wide shot", "perspective", "zoom", "viewpoint"),

@@ -5,7 +5,9 @@ package com.google.ai.edge.gallery.customtasks.flux.generation
 data class FluxPromptSectionReport(
   val sectionNames: Set<String>,
   val bodyTokenCount: Int,
+  val maximumBodyTokens: Int,
   val truncationOccurred: Boolean,
+  val omittedGeneratedSectionNames: Set<String>,
   val editingMode: FluxEditMode,
   val framingCategory: FluxFramingCategory,
   val poseCategory: FluxPoseCategory,

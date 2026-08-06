@@ -54,6 +54,8 @@ import com.google.ai.edge.gallery.customtasks.flux.generation.FluxBuiltInFigureP
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxFigureAttributes
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxFigurePreset
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxRealismProfile
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxEditVisualContext
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxFramingCategory
 import kotlinx.coroutines.launch
 
 @Composable
@@ -69,7 +71,13 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
   var realismProfile by remember { mutableStateOf(FluxRealismProfile.NATURAL_PHOTO) }
   var preserveIdentity by remember { mutableStateOf(true) }; var preservePoseSimple by remember { mutableStateOf(true) }; var preserveBackgroundSimple by remember { mutableStateOf(false) }
   var figureAction by remember { mutableStateOf<FluxFigureAction>(FluxFigureAction.PreserveCurrent) }
-  var presetIndex by remember { mutableStateOf(1) }; var figureDescription by remember { mutableStateOf(FluxBuiltInFigurePresets.all[presetIndex].attributes.description()) }
+  var presetIndex by remember { mutableStateOf(1) }
+  val initialAttributes = FluxBuiltInFigurePresets.all[presetIndex].attributes
+  var overallBuild by remember { mutableStateOf(initialAttributes.overallBuild) }; var shoulders by remember { mutableStateOf(initialAttributes.shoulders) }
+  var torso by remember { mutableStateOf(initialAttributes.torso) }; var waist by remember { mutableStateOf(initialAttributes.waist) }
+  var hips by remember { mutableStateOf(initialAttributes.hips) }; var legs by remember { mutableStateOf(initialAttributes.legs) }; var heightImpression by remember { mutableStateOf(initialAttributes.heightImpression) }
+  var framing by remember { mutableStateOf(FluxFramingCategory.UNSPECIFIED) }; var handsVisible by remember { mutableStateOf(false) }
+  var limbsOverlap by remember { mutableStateOf(false) }; var faceTurned by remember { mutableStateOf(false) }; var faceOccluded by remember { mutableStateOf(false) }
   var customPresetName by remember { mutableStateOf("My figure preset") }; var selectedUserPresetId by remember { mutableStateOf<String?>(null) }
   var preserveOutfit by remember { mutableStateOf(true) }; var preservePose by remember { mutableStateOf(true) }; var preserveBackground by remember { mutableStateOf(true) }; var preserveCamera by remember { mutableStateOf(true) }
   var preserveLighting by remember { mutableStateOf(true) }; var preserveHair by remember { mutableStateOf(true) }; var preserveMakeup by remember { mutableStateOf(true) }; var preserveAccessories by remember { mutableStateOf(true) }
@@ -87,17 +95,20 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
       originalUri = selected
     }
   }
-  fun figureRequest() = FluxFigureEditRequest(figureAction, figureDescription, preserveOutfit, preservePose, preserveBackground, preserveCamera, preserveLighting, preserveHair, preserveMakeup, preserveAccessories, instruction, realismProfile)
+  fun attributes() = FluxFigureAttributes(overallBuild, shoulders, torso, waist, hips, legs, heightImpression)
+  fun loadAttributes(value: FluxFigureAttributes) { overallBuild = value.overallBuild; shoulders = value.shoulders; torso = value.torso; waist = value.waist; hips = value.hips; legs = value.legs; heightImpression = value.heightImpression }
+  fun figureRequest() = FluxFigureEditRequest(if (figureAction is FluxFigureAction.Custom) FluxFigureAction.Custom(attributes().description()) else figureAction, attributes().description(), preserveOutfit, preservePose, preserveBackground, preserveCamera, preserveLighting, preserveHair, preserveMakeup, preserveAccessories, instruction, realismProfile,
+    FluxEditVisualContext(framing, handsVisible, limbsOverlap, faceTurned, faceOccluded))
   fun runGeneration(unlock: Boolean = false) {
-    runCatching {
+    scope.launch { runCatching {
       if (mode == FluxEditMode.SIMPLE) {
         val compiled = viewModel.compile(FluxSimpleEditRequest(instruction, preserveIdentity, preservePoseSimple, preserveBackgroundSimple, realismProfile))
         viewModel.generate(imageUri, compiled.positivePrompt, mode, instruction)
       } else {
-        var request = figureRequest(); val compiled = viewModel.compile(request, figureDescription)
-        if (compiled.conflicts.isNotEmpty() && !unlock) { conflicts = compiled.conflicts.map { it.lockName }; return }
+        var request = figureRequest(); val compiled = viewModel.compile(request, attributes().description())
+        if (compiled.conflicts.isNotEmpty() && !unlock) { conflicts = compiled.conflicts.map { it.lockName }; return@launch }
         if (unlock) request = request.copy(
-          preserveOutfit = preserveOutfit && "outfit" !in conflicts && "accessories" !in conflicts,
+          preserveOutfit = preserveOutfit && "outfit" !in conflicts,
           preservePose = preservePose && "pose and hand placement" !in conflicts,
           preserveBackground = preserveBackground && "location and background" !in conflicts,
           preserveCamera = preserveCamera && "framing and camera" !in conflicts,
@@ -105,11 +116,11 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
           preserveHair = preserveHair && "hairstyle" !in conflicts,
           preserveMakeupAndExpression = preserveMakeup && "makeup and expression" !in conflicts,
           preserveAccessories = preserveAccessories && "accessories" !in conflicts)
-        val resolved = viewModel.compile(request, figureDescription)
+        val resolved = viewModel.compile(request, attributes().description())
         viewModel.generate(imageUri, resolved.positivePrompt, mode, instruction, FluxBuiltInFigurePresets.all.getOrNull(presetIndex)?.name)
         conflicts = emptyList()
       }
-    }.onFailure { viewModel.outputError(it.message ?: "The edit instruction is invalid.") }
+    }.onFailure { viewModel.outputError(it.message ?: "The edit instruction is invalid.") } }
   }
   Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
     Text("Local FLUX image editor")
@@ -138,23 +149,31 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
       Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         OutlinedButton({ figureAction = FluxFigureAction.PreserveCurrent }) { Text("Preserve current") }
         OutlinedButton({ figureAction = FluxFigureAction.ApplyPreset(FluxBuiltInFigurePresets.all[presetIndex].id) }) { Text("Apply preset") }
-        OutlinedButton({ figureAction = FluxFigureAction.Custom(figureDescription) }) { Text("Custom") }
+        OutlinedButton({ figureAction = FluxFigureAction.Custom(attributes().description()) }) { Text("Custom") }
       }
       Text("Figure preset: ${FluxBuiltInFigurePresets.all[presetIndex].name}")
       Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        OutlinedButton({ presetIndex = (presetIndex - 1).coerceAtLeast(0); figureDescription = FluxBuiltInFigurePresets.all[presetIndex].attributes.description(); figureAction = FluxFigureAction.ApplyPreset(FluxBuiltInFigurePresets.all[presetIndex].id) }) { Text("Previous") }
-        OutlinedButton({ presetIndex = (presetIndex + 1).coerceAtMost(FluxBuiltInFigurePresets.all.lastIndex); figureDescription = FluxBuiltInFigurePresets.all[presetIndex].attributes.description(); figureAction = FluxFigureAction.ApplyPreset(FluxBuiltInFigurePresets.all[presetIndex].id) }) { Text("Next") }
+        OutlinedButton({ presetIndex = (presetIndex - 1).coerceAtLeast(0); loadAttributes(FluxBuiltInFigurePresets.all[presetIndex].attributes); figureAction = FluxFigureAction.ApplyPreset(FluxBuiltInFigurePresets.all[presetIndex].id); selectedUserPresetId = null }) { Text("Previous") }
+        OutlinedButton({ presetIndex = (presetIndex + 1).coerceAtMost(FluxBuiltInFigurePresets.all.lastIndex); loadAttributes(FluxBuiltInFigurePresets.all[presetIndex].attributes); figureAction = FluxFigureAction.ApplyPreset(FluxBuiltInFigurePresets.all[presetIndex].id); selectedUserPresetId = null }) { Text("Next") }
       }
-      OutlinedTextField(figureDescription, { figureDescription = it; if (figureAction is FluxFigureAction.Custom) figureAction = FluxFigureAction.Custom(it) }, Modifier.fillMaxWidth(), label = { Text("Editable figure attributes: build, shoulders, torso, waist, hips, legs, height") }, minLines = 3)
+      FigureAttributeField("Overall build", overallBuild) { overallBuild = it }; FigureAttributeField("Shoulder proportions", shoulders) { shoulders = it }
+      FigureAttributeField("Torso proportions", torso) { torso = it }; FigureAttributeField("Waist definition", waist) { waist = it }
+      FigureAttributeField("Hip proportions", hips) { hips = it }; FigureAttributeField("Leg proportions", legs) { legs = it }
+      FigureAttributeField("Height impression", heightImpression) { heightImpression = it }
       OutlinedTextField(customPresetName, { customPresetName = it }, Modifier.fillMaxWidth(), label = { Text("Custom preset name") })
       Row {
         OutlinedButton({
           val id = selectedUserPresetId ?: "user.${System.currentTimeMillis()}"
-          viewModel.savePreset(FluxFigurePreset(id, customPresetName.trim(), FluxFigureAttributes(overallBuild = figureDescription), false)); selectedUserPresetId = id
-        }, enabled = customPresetName.isNotBlank() && figureDescription.isNotBlank()) { Text(if (selectedUserPresetId == null) "Duplicate/save preset" else "Update preset") }
+          viewModel.savePreset(FluxFigurePreset(id, customPresetName.trim(), attributes(), false)); selectedUserPresetId = id
+        }, enabled = customPresetName.isNotBlank() && attributes().description().isNotBlank()) { Text(if (selectedUserPresetId == null) "Save user copy" else "Update preset") }
         selectedUserPresetId?.let { id -> OutlinedButton({ viewModel.deletePreset(id); selectedUserPresetId = null }) { Text("Delete custom preset") } }
       }
-      userPresets.forEach { saved -> OutlinedButton({ selectedUserPresetId = saved.id; customPresetName = saved.name; figureDescription = saved.attributes.description(); figureAction = FluxFigureAction.Custom(figureDescription) }) { Text("Use ${saved.name}") } }
+      userPresets.forEach { saved -> OutlinedButton({ selectedUserPresetId = saved.id; customPresetName = saved.name; loadAttributes(saved.attributes); figureAction = FluxFigureAction.Custom(saved.attributes.description()) }) { Text("Use ${saved.name}") } }
+      Text("Framing and visibility")
+      FluxFramingCategory.entries.forEach { value -> OutlinedButton({ framing = value }) { Text((if (value == FluxFramingCategory.UNSPECIFIED) "Match reference / Unspecified" else value.name.replace('_', ' ').lowercase()).let { if (framing == value) "$it ✓" else it }) } }
+      Lock("Hands are clearly visible", handsVisible) { handsVisible = it }; Lock("Limbs cross or overlap", limbsOverlap) { limbsOverlap = it }
+      Lock("Face is turned", faceTurned) { faceTurned = it }; Lock("Face is partially occluded", faceOccluded) { faceOccluded = it }
+      Text("These controls describe visible reference-image structure. They do not run an automatic body detector.")
       Text("Preservation locks")
       Lock("Preserve outfit", preserveOutfit) { preserveOutfit = it }; Lock("Preserve pose", preservePose) { preservePose = it }; Lock("Preserve location/background", preserveBackground) { preserveBackground = it }; Lock("Preserve framing/camera", preserveCamera) { preserveCamera = it }
       Lock("Preserve lighting", preserveLighting) { preserveLighting = it }; Lock("Preserve hairstyle", preserveHair) { preserveHair = it }; Lock("Preserve makeup/expression", preserveMakeup) { preserveMakeup = it }; Lock("Preserve accessories", preserveAccessories) { preserveAccessories = it }
@@ -201,6 +220,10 @@ fun FluxEditorScreen(viewModel: FluxEditorViewModel = hiltViewModel()) {
 }
 
 @Composable private fun Lock(label: String, checked: Boolean, change: (Boolean) -> Unit) { Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(checked, change); Text(label) } }
+
+@Composable private fun FigureAttributeField(label: String, value: String, change: (String) -> Unit) {
+  OutlinedTextField(value, change, Modifier.fillMaxWidth(), label = { Text(label) }, singleLine = true)
+}
 
 @Composable private fun FluxFullscreenViewer(bitmap: android.graphics.Bitmap, onClose: () -> Unit) {
   var scale by remember { mutableStateOf(1f) }

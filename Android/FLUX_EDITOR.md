@@ -703,3 +703,36 @@ bitmap remains until another generation succeeds.
 These positive instructions can reduce common structural errors but cannot guarantee perfect
 hands, faces, limbs, identity preservation, anatomy, or photographic realism. Physical Pixel
 verification remains required.
+
+### Phase 2K corrective hardening
+
+Prompt compilation now uses a deterministic `FluxPromptBudgetPlanner`. Production compilation
+loads the installed authoritative Qwen vocabulary, merges, and special-token data and counts
+body tokens without adding a wrapper; `FluxPromptConditioner` remains the only wrapper owner.
+The maximum body width is derived from the existing 512-token contract after its unchanged
+prefix/suffix reservation. Literal edit/action sections are admitted first, generated sections
+are deduplicated and admitted in semantic priority order, and irrelevant lower-priority
+boilerplate is omitted before literal text is code-point-truncated as a last resort. Planning
+returns counts, limits, truncation, included section names, and omitted generated section names;
+only the debug source-set report can represent that scalar metadata and it has no prompt field.
+
+Figure controls now expose seven separate descriptive attributes and separately populate each
+field from built-in or user presets. Saving a built-in selection creates a user-owned copy;
+only a selected user preset can be updated or deleted. A conservative Framing and visibility
+section defaults to unspecified with all switches off and explicitly states that no automatic
+body detector runs. Its framing, visible-hands, overlapping-limbs, turned-face, and occluded-face
+values are passed as typed visual context in addition to keyword detection.
+
+Outfit and accessories are distinct intents. Clothing terms conflict only with the outfit lock;
+jewelry, necklace, earrings, bracelet, watch, belt, bags, glasses, sunglasses, and hat terms
+conflict only with the accessories lock.
+
+Cancellation and all handled generation failures copy the last successful state, preserving the
+bitmap, seed selection/text/actual seed, mode, visible instruction, preset name, iterative URI,
+and valid saved URI while clearing only transient progress. A prior bitmap is recycled only
+after a newly successful bitmap has entered state. Iterative deletion accepts only this app's
+FileProvider authority and exact `flux_iterative/reference_*.png` URI shape, canonicalizes the
+target, verifies its canonical parent, and deletes an obsolete owned file only after replacement
+finalization succeeds. Provider-owned sources are never deleted. `onCleared` cancels active work
+and deletes only the current app-owned iterative reference; configuration changes retain the
+ViewModel and therefore retain that reference.

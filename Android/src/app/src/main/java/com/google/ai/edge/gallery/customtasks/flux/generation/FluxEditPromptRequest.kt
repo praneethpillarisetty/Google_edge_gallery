@@ -3,7 +3,7 @@ package com.google.ai.edge.gallery.customtasks.flux.generation
 
 enum class FluxEditMode { SIMPLE, FIGURE }
 
-enum class FluxPromptIntent { OUTFIT, BACKGROUND, POSE, CAMERA, LIGHTING, HAIR, MAKEUP_EXPRESSION, BODY }
+enum class FluxPromptIntent { OUTFIT, ACCESSORIES, BACKGROUND, POSE, CAMERA, LIGHTING, HAIR, MAKEUP_EXPRESSION, BODY }
 
 enum class FluxRealismProfile { NATURAL_PHOTO, EDITORIAL_PHOTO, CINEMATIC_PHOTO }
 
@@ -59,4 +59,8 @@ data class FluxCompiledPrompt(
   val sectionNames: Set<String> = emptySet(),
   val framingCategory: FluxFramingCategory = FluxFramingCategory.UNSPECIFIED,
   val poseCategory: FluxPoseCategory = FluxPoseCategory.NONE,
+  val bodyTokenCount: Int = 0,
+  val maximumBodyTokens: Int = 0,
+  val truncationOccurred: Boolean = false,
+  val omittedGeneratedSectionNames: Set<String> = emptySet(),
 )

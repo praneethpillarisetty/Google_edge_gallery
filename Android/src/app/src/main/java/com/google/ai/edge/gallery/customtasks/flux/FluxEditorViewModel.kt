@@ -25,6 +25,8 @@ import com.google.ai.edge.gallery.customtasks.flux.generation.FluxFigurePreset
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxFigurePresetRepository
 import com.google.ai.edge.gallery.customtasks.flux.output.FluxGeneratedImageStore
 import com.google.ai.edge.gallery.customtasks.flux.output.FluxIterativeReferenceStore
+import com.google.ai.edge.gallery.customtasks.flux.prompt.FluxAuthoritativeBodyTokenCounter
+import com.google.ai.edge.gallery.customtasks.flux.prompt.FluxPromptAssetResolver
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -52,6 +54,11 @@ data class FluxProductionGenerationState(
   val iterativeReference: Uri? = null,
   val stagingReference: Boolean = false,
 )
+
+internal fun fluxTerminalGenerationState(previous: FluxProductionGenerationState, stage: FluxGenerationStage, elapsed: Long, error: String) =
+  previous.copy(running = false, stage = stage, currentStep = 0, currentGraph = null,
+    completedGraphCount = 0, elapsedMillis = elapsed, cancellationAvailable = false,
+    sanitizedError = error, stagingReference = false)
 
 fun fluxGenerateReady(repositoryReady: Boolean, reference: Uri?, prompt: String, running: Boolean, thermalStatus: Int) =
   repositoryReady && reference != null && prompt.isNotBlank() && !running &&
@@ -94,7 +101,6 @@ class FluxEditorViewModel @Inject constructor(
   private val mutableGenerationState = MutableStateFlow(FluxProductionGenerationState())
   val generationState = mutableGenerationState.asStateFlow()
   private var generationJob: Job? = null
-  private val promptCompiler = FluxEditPromptCompiler()
   private data class LastGeneration(val reference: Uri, val prompt: String, val mode: FluxEditMode, val instruction: String, val presetName: String?)
   private var lastGeneration: LastGeneration? = null
   private val mutableUserPresets = MutableStateFlow<List<FluxFigurePreset>>(emptyList())
@@ -126,8 +132,14 @@ class FluxEditorViewModel @Inject constructor(
     generationJob?.isActive == true, powerManager.currentThermalStatus,
   )
 
-  fun compile(request: FluxSimpleEditRequest): FluxCompiledPrompt = promptCompiler.compile(request)
-  fun compile(request: FluxFigureEditRequest, presetDescription: String?): FluxCompiledPrompt = promptCompiler.compile(request, presetDescription)
+  suspend fun compile(request: FluxSimpleEditRequest): FluxCompiledPrompt = withAuthoritativeCompiler { it.compile(request) }
+  suspend fun compile(request: FluxFigureEditRequest, presetDescription: String?): FluxCompiledPrompt = withAuthoritativeCompiler { it.compile(request, presetDescription) }
+
+  private suspend fun <T> withAuthoritativeCompiler(block: (FluxEditPromptCompiler) -> T): T =
+    repository.withModelFilesLocked { root, manifest, _ ->
+      val assets = FluxPromptAssetResolver(root, manifest).resolve()
+      block(FluxEditPromptCompiler(FluxAuthoritativeBodyTokenCounter.create(assets), FluxAuthoritativeBodyTokenCounter.maximumBodyTokens))
+    }
 
   fun savePreset(preset: FluxFigurePreset) { viewModelScope.launch { presetRepository.save(preset); mutableUserPresets.value = presetRepository.userPresets() } }
   fun deletePreset(id: String) { viewModelScope.launch { presetRepository.delete(id); mutableUserPresets.value = presetRepository.userPresets() } }
@@ -142,7 +154,7 @@ class FluxEditorViewModel @Inject constructor(
     lastGeneration = LastGeneration(selected, prompt, mode, visibleInstruction, presetName)
     generationJob = viewModelScope.launch {
       val started = System.nanoTime()
-      val previous = mutableGenerationState.value.finalBitmap
+      val previousState = mutableGenerationState.value
       try {
         val seedSelection = when (val current = mutableGenerationState.value.seedSelection) {
           FluxSeedSelection.Random -> FluxSeedSelection.Random
@@ -163,19 +175,16 @@ class FluxEditorViewModel @Inject constructor(
           editingMode = mode, visibleInstruction = visibleInstruction, figurePresetName = presetName,
           iterativeReference = mutableGenerationState.value.iterativeReference,
         )
+        if (previousState.finalBitmap !== result.bitmap) previousState.finalBitmap?.recycle()
       } catch (_: CancellationException) {
-        mutableGenerationState.value = FluxProductionGenerationState(
-          stage = FluxGenerationStage.CANCELLED, elapsedMillis = (System.nanoTime() - started) / 1_000_000,
-          sanitizedError = "Generation cancelled.", finalBitmap = previous,
-        )
+        mutableGenerationState.value = fluxTerminalGenerationState(previousState, FluxGenerationStage.CANCELLED,
+          (System.nanoTime() - started) / 1_000_000, "Generation cancelled.")
       } catch (invalid: IllegalArgumentException) {
-        mutableGenerationState.value = mutableGenerationState.value.copy(running = false, stage = FluxGenerationStage.ERROR,
-          elapsedMillis = (System.nanoTime() - started) / 1_000_000, sanitizedError = invalid.message ?: "Invalid fixed seed.", finalBitmap = previous)
+        mutableGenerationState.value = fluxTerminalGenerationState(previousState, FluxGenerationStage.ERROR,
+          (System.nanoTime() - started) / 1_000_000, invalid.message ?: "Invalid fixed seed.")
       } catch (failure: FluxGenerationException) {
-        mutableGenerationState.value = FluxProductionGenerationState(
-          stage = FluxGenerationStage.ERROR, elapsedMillis = (System.nanoTime() - started) / 1_000_000,
-          sanitizedError = failure.category.userMessage, finalBitmap = previous,
-        )
+        mutableGenerationState.value = fluxTerminalGenerationState(previousState, FluxGenerationStage.ERROR,
+          (System.nanoTime() - started) / 1_000_000, failure.category.userMessage)
       }
     }
   }
