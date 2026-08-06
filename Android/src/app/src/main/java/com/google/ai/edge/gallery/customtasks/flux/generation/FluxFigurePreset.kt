@@ -31,14 +31,25 @@ data class FluxFigurePreset(val id: String, val name: String, val attributes: Fl
 
 object FluxBuiltInFigurePresets {
   val all: List<FluxFigurePreset> = listOf(
-    preset("preserve", "Preserve reference", "preserve the reference's current figure"),
-    preset("balanced", "Balanced natural", "balanced natural proportions"),
-    preset("athletic", "Athletic balanced", "athletic balanced proportions"),
-    preset("soft_curvy", "Soft curvy", "soft curvy proportions with a naturally defined waist and proportionate hips"),
-    preset("tall", "Tall proportioned", "tall appearance with naturally longer leg proportions"),
-    preset("petite", "Petite proportioned", "petite proportions consistent with the subject's frame"),
+    FluxFigurePreset("builtin.preserve", "Preserve reference", FluxFigureAttributes(), true),
+    preset("balanced", "Balanced natural", "balanced natural build", "shoulders balanced with the frame", "proportionate torso", "gently defined waist", "hips balanced with the shoulders", "even natural leg proportions", "average height impression"),
+    preset("athletic", "Athletic balanced", "naturally athletic build", "moderately broad shoulders", "firm proportionate torso", "subtly defined waist", "hips balanced with the torso", "strong proportionate legs", "upright height impression"),
+    preset("soft_curvy", "Soft curvy", "softly rounded build with a visibly changed silhouette", "gently rounded shoulders balanced with the hips", "slightly fuller and softly contoured torso", "clearly defined but natural waist transition", "visibly fuller hips in coherent proportion to the waist and torso", "visible upper legs slightly fuller and balanced with the hips", "natural height impression with unchanged anatomical scale"),
+    preset("tall", "Tall proportioned", "slender proportionate build", "shoulders balanced with the frame", "naturally elongated torso", "gently defined waist", "hips proportionate to the shoulders", "visibly longer balanced legs", "tall height impression"),
+    preset("petite", "Petite proportioned", "compact proportionate build", "narrow balanced shoulders", "compact natural torso", "gently defined waist", "hips balanced with the compact frame", "shorter proportionate legs", "petite height impression"),
   )
-  private fun preset(id: String, name: String, build: String) = FluxFigurePreset("builtin.$id", name, FluxFigureAttributes(overallBuild = build), true)
+  fun byId(id: String): FluxFigurePreset? = all.singleOrNull { it.id == id }
+  private fun preset(id: String, name: String, overallBuild: String, shoulders: String, torso: String, waist: String, hips: String, legs: String, heightImpression: String) =
+    FluxFigurePreset("builtin.$id", name, FluxFigureAttributes(overallBuild, shoulders, torso, waist, hips, legs, heightImpression), true)
+}
+
+data class FluxFigurePresetSelection(val presetId: String, val presetName: String, val attributes: FluxFigureAttributes, val action: FluxFigureAction)
+
+/** One immutable value prevents navigation from retaining fields or an action from the prior preset. */
+fun selectBuiltInFigurePreset(preset: FluxFigurePreset): FluxFigurePresetSelection {
+  require(preset.builtIn)
+  return FluxFigurePresetSelection(preset.id, preset.name, preset.attributes,
+    if (preset.id == "builtin.preserve") FluxFigureAction.PreserveCurrent else FluxFigureAction.ApplyPreset(preset.id))
 }
 
 /** Persists descriptive configuration only; no URI, path, prompt history, image, or identity fields exist. */

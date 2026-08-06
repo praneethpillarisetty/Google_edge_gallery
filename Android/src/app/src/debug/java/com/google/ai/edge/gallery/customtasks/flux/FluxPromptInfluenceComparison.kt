@@ -17,6 +17,11 @@ import com.google.ai.edge.gallery.customtasks.flux.diagnostics.FluxPromptInfluen
 import com.google.ai.edge.gallery.customtasks.flux.diagnostics.FluxTensorDiff
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxProductionNoiseFactory
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxSeedParser
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxEditPromptCompiler
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxFigureAction
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxFigureEditRequest
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxFigurePreset
+import com.google.ai.edge.gallery.customtasks.flux.prompt.FluxAuthoritativeBodyTokenCounter
 import com.google.ai.edge.gallery.customtasks.flux.image.FluxReferenceConstantsLoader
 import com.google.ai.edge.gallery.customtasks.flux.image.FluxReferenceImagePreprocessor
 import com.google.ai.edge.gallery.customtasks.flux.image.FluxReferenceImageSourceStager
@@ -56,6 +61,13 @@ data class FluxPromptComparisonState(
   val bitmapB: Bitmap? = null,
 )
 
+internal fun interpretFigureInfluence(figureActionIncluded: Boolean, selectedPresetId: String?, tokenDifferences: Int, conditioningDifferent: Boolean, latentsDifferent: Boolean, bitmapDifferencePercent: Double): String = when {
+  !figureActionIncluded || selectedPresetId.isNullOrBlank() || selectedPresetId == "builtin.preserve" -> "FIGURE_PRESET_NOT_COMPILED"
+  tokenDifferences == 0 || !conditioningDifferent || !latentsDifferent -> "FIGURE_PROMPT_INFLUENCE_NOT_OBSERVED"
+  bitmapDifferencePercent > FluxPromptInfluenceMetrics.BITMAP_DIFFERENT_PIXEL_PERCENT_THRESHOLD -> "FIGURE_PROMPT_INFLUENCE_OBSERVED"
+  else -> "FIGURE_PROMPT_INFLUENCE_NOT_OBSERVED"
+}
+
 @HiltViewModel
 class FluxPromptInfluenceComparisonViewModel @Inject constructor(
   @ApplicationContext private val context: Context,
@@ -66,10 +78,19 @@ class FluxPromptInfluenceComparisonViewModel @Inject constructor(
   private var job: Job? = null
 
   fun run(uri: Uri?, promptA: String, promptB: String, fixedSeedText: String, modelReadyHint: Boolean) {
+    runInternal(uri, promptA, promptB, fixedSeedText, modelReadyHint, null, null)
+  }
+
+  fun runFigure(uri: Uri?, request: FluxFigureEditRequest, preset: FluxFigurePreset, fixedSeedText: String, modelReadyHint: Boolean) {
+    runInternal(uri, "", "", fixedSeedText, modelReadyHint, request, preset)
+  }
+
+  private fun runInternal(uri: Uri?, promptA: String, promptB: String, fixedSeedText: String, modelReadyHint: Boolean, figureRequest: FluxFigureEditRequest?, figurePreset: FluxFigurePreset?) {
     if (job?.isActive == true) return
     val selected = uri ?: return fail("Select one reference image before running comparison.")
     if (!modelReadyHint) return fail("Model repository must be Ready before running comparison.")
-    if (promptA.isBlank() || promptB.isBlank()) return fail("Prompt A and Prompt B are required.")
+    if (figureRequest == null && (promptA.isBlank() || promptB.isBlank())) return fail("Prompt A and Prompt B are required.")
+    if (figureRequest != null && (figurePreset == null || figurePreset.id == "builtin.preserve" || figureRequest.figureAction !is FluxFigureAction.ApplyPreset)) return fail("Select a non-preservation built-in preset.")
     val seed = try { FluxSeedParser.parseFixed(fixedSeedText).value } catch (_: IllegalArgumentException) { return fail("Fixed seed must be a signed 64-bit integer.") }
     val previousState = mutableState.value
     mutableState.value = FluxPromptComparisonState(running = true, stage = FluxPromptComparisonStage.VALIDATING)
@@ -86,6 +107,16 @@ class FluxPromptInfluenceComparisonViewModel @Inject constructor(
         val noiseB = initial.copyValues()
         require(noiseA.contentEquals(noiseB)) { "Initial-noise defensive copies differ." }
         val result = repository.withModelFilesLocked { root, manifest, metadata ->
+          val compiledPair = if (figureRequest != null) {
+            val assets = FluxPromptAssetResolver(root, manifest).resolve()
+            val compiler = FluxEditPromptCompiler(FluxAuthoritativeBodyTokenCounter.create(assets), FluxAuthoritativeBodyTokenCounter.maximumBodyTokens)
+            val preserve = compiler.compile(figureRequest.copy(figureAction = FluxFigureAction.PreserveCurrent, figureDescription = null), null)
+            val selectedPreset = requireNotNull(figurePreset)
+            val applied = compiler.compile(figureRequest.copy(figureAction = FluxFigureAction.ApplyPreset(selectedPreset.id), figureDescription = selectedPreset.attributes.description()), selectedPreset.attributes.description())
+            Triple(preserve, applied, selectedPreset)
+          } else null
+          val actualPromptA = compiledPair?.first?.positivePrompt ?: promptA
+          val actualPromptB = compiledPair?.second?.positivePrompt ?: promptB
           update("none", FluxPromptComparisonStage.STAGING_REFERENCE, started)
           FluxReferenceImageSourceStager(context.cacheDir, context.contentResolver, selected).withStagedSource { staged ->
             val evidence = FluxPhase2gEvidenceLoader(context.assets).load { coroutineContext.ensureActive() }
@@ -96,11 +127,11 @@ class FluxPromptInfluenceComparisonViewModel @Inject constructor(
             var b: RunCapture? = null
             var resultOwnsBitmaps = false
             try {
-              a = runOne("A", promptA, noiseA, root, manifest, metadata, evidence, decoderEvidence, constants, image, started)
+              a = runOne("A", actualPromptA, noiseA, root, manifest, metadata, evidence, decoderEvidence, constants, image, started)
               coroutineContext.ensureActive()
-              b = runOne("B", promptB, noiseB, root, manifest, metadata, evidence, decoderEvidence, constants, image, started)
+              b = runOne("B", actualPromptB, noiseB, root, manifest, metadata, evidence, decoderEvidence, constants, image, started)
               update("none", FluxPromptComparisonStage.COMPARING, started, 4, 32)
-              buildComparison(seed, requireNotNull(a), requireNotNull(b), started, heapBefore, pssBefore).also { resultOwnsBitmaps = true }
+              buildComparison(seed, requireNotNull(a), requireNotNull(b), started, heapBefore, pssBefore, compiledPair).also { resultOwnsBitmaps = true }
             } finally {
               if (!resultOwnsBitmaps) {
                 a?.bitmap?.recycle()
@@ -155,18 +186,23 @@ class FluxPromptInfluenceComparisonViewModel @Inject constructor(
     }
   }
 
-  private fun buildComparison(seed: Long, a: RunCapture, b: RunCapture, started: Long, heapBefore: Long, pssBefore: Long): ComparisonResult {
+  private fun buildComparison(seed: Long, a: RunCapture, b: RunCapture, started: Long, heapBefore: Long, pssBefore: Long, figure: Triple<com.google.ai.edge.gallery.customtasks.flux.generation.FluxCompiledPrompt, com.google.ai.edge.gallery.customtasks.flux.generation.FluxCompiledPrompt, FluxFigurePreset>? = null): ComparisonResult {
     val tokenDiff = FluxPromptInfluenceMetrics.compareTokens(a.tokens, b.tokens)
     val textDiff = FluxPromptInfluenceMetrics.compareFp32(a.conditioning, b.conditioning)
     val latentDiff = FluxPromptInfluenceMetrics.compareFp32(a.finalLatents, b.finalLatents)
     val decoderDiff = FluxPromptInfluenceMetrics.compareFp32(a.decoder, b.decoder)
     val bitmapDiff = FluxPromptInfluenceMetrics.compareArgb(256, 256, a.pixels, b.pixels)
-    val interpretation = FluxPromptInfluenceMetrics.interpret(tokenDiff, textDiff, latentDiff, bitmapDiff)
+    val genericInterpretation = FluxPromptInfluenceMetrics.interpret(tokenDiff, textDiff, latentDiff, bitmapDiff)
+    val interpretation = if (figure == null) genericInterpretation.toString() else interpretFigureInfluence("figure_action" in figure.second.sectionNames, figure.third.id, tokenDiff.differingPositions, textDiff.different, latentDiff.different, bitmapDiff.differingPercent)
+    val figureLines = figure?.let { (_, compiled, preset) ->
+      "preset: id=${preset.id}, name=${preset.name}\nnon-empty attributes: ${preset.attributes.description().split(',').count { it.isNotBlank() }}\ncompiled body tokens: ${compiled.bodyTokenCount}\nincluded sections: ${compiled.sectionNames.sorted()}\nomitted sections: ${compiled.omittedGeneratedSectionNames.sorted()}\nfigure_action included: ${"figure_action" in compiled.sectionNames}"
+    } ?: ""
     val summary = """
       |backend: GPU FP32
       |fixed seed: $seed
       |graph sequence: kv_vae_enc.tflite -> ke_enc0.tflite -> ke_enc1.tflite -> ke_enc2.tflite -> ${a.core.graphSequence.joinToString(" -> ")} -> ${FluxVaeDecoder.GRAPH}
       |runs completed: A and B
+      |$figureLines
       |token diff: count=${tokenDiff.tokenCount}, differing=${tokenDiff.differingPositions}, percent=${tokenDiff.differingPercent}, aSha=${tokenDiff.aSha256LittleEndianInt64}, bSha=${tokenDiff.bSha256LittleEndianInt64}
       |text conditioning A: ${formatSummary(FluxPromptInfluenceMetrics.summarizeFp32(a.conditioning))}
       |text conditioning diff: ${formatDiff(textDiff)}
@@ -179,6 +215,7 @@ class FluxPromptInfluenceComparisonViewModel @Inject constructor(
       |process PSS: $pssBefore -> ${Debug.getPss()} kB
       |cancellation available: true
       |interpretation: $interpretation
+      |Numeric differences do not prove that the requested body shape was visually achieved. Visual inspection on a full-body reference remains required.
       |locally observed diagnostic hashes only; no prompt text, URI, path, image bytes, or full tensor values included
     """.trimMargin()
     return ComparisonResult(summary, a.bitmap, b.bitmap)

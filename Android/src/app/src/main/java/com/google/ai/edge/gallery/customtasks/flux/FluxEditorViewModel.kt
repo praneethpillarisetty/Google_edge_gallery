@@ -19,6 +19,7 @@ import com.google.ai.edge.gallery.customtasks.flux.generation.FluxSeedSelection
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxEditMode
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxEditPromptCompiler
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxFigureEditRequest
+import com.google.ai.edge.gallery.customtasks.flux.generation.FluxFigureAction
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxSimpleEditRequest
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxCompiledPrompt
 import com.google.ai.edge.gallery.customtasks.flux.generation.FluxFigurePreset
@@ -44,6 +45,15 @@ sealed interface FluxPromptCompilationState {
   data object Compiling : FluxPromptCompilationState
   data class Error(val message: String) : FluxPromptCompilationState
 }
+
+data class FluxFigureGenerationSummary(
+  val action: String,
+  val presetName: String,
+  val nonEmptyAttributeCount: Int,
+  val framingCategory: String,
+  val figureActionIncluded: Boolean,
+  val figureActionTruncatedOrOmitted: Boolean,
+)
 
 internal class FluxPromptCompilationRunner(private val dispatcher: CoroutineDispatcher) {
   suspend fun <T> run(block: () -> T): T = withContext(dispatcher) { block() }
@@ -127,6 +137,8 @@ class FluxEditorViewModel @Inject constructor(
   private val compilationGate = FluxCompilationGate()
   private val mutableCompilationState = MutableStateFlow<FluxPromptCompilationState>(FluxPromptCompilationState.Idle)
   val compilationState = mutableCompilationState.asStateFlow()
+  private val mutableFigureSummary = MutableStateFlow<FluxFigureGenerationSummary?>(null)
+  val figureSummary = mutableFigureSummary.asStateFlow()
   private data class LastGeneration(val reference: Uri, val prompt: String, val mode: FluxEditMode, val instruction: String, val presetName: String?)
   private var lastGeneration: LastGeneration? = null
   private val mutableUserPresets = MutableStateFlow<List<FluxFigurePreset>>(emptyList())
@@ -168,11 +180,20 @@ class FluxEditorViewModel @Inject constructor(
 
   fun compileFigureAndGenerate(
     reference: Uri?, request: FluxFigureEditRequest, presetDescription: String?,
-    visibleInstruction: String, presetName: String?, onConflicts: (List<String>) -> Unit,
+    visibleInstruction: String, presetName: String?, nonEmptyAttributeCount: Int,
+    onConflicts: (List<String>) -> Unit,
   ) {
     startCompilation {
       val compiled = withAuthoritativeCompiler { it.compile(request, presetDescription) }
       kotlinx.coroutines.currentCoroutineContext().ensureActive()
+      mutableFigureSummary.value = FluxFigureGenerationSummary(
+        action = when (request.figureAction) { FluxFigureAction.PreserveCurrent -> "PreserveCurrent"; is FluxFigureAction.ApplyPreset -> "ApplyPreset"; is FluxFigureAction.Custom -> "Custom" },
+        presetName = presetName ?: "Custom",
+        nonEmptyAttributeCount = nonEmptyAttributeCount,
+        framingCategory = compiled.framingCategory.name,
+        figureActionIncluded = "figure_action" in compiled.sectionNames,
+        figureActionTruncatedOrOmitted = "figure_action" !in compiled.sectionNames || "figure_action" in compiled.omittedGeneratedSectionNames,
+      )
       if (compiled.conflicts.isNotEmpty()) onConflicts(compiled.conflicts.map { it.lockName })
       else generate(reference, compiled.positivePrompt, FluxEditMode.FIGURE, visibleInstruction, presetName)
     }
